@@ -100,7 +100,7 @@ def phase_sparse(chunks) -> list[dict]:
 
     with SPARSE_FILE.open("w", encoding="utf-8") as f:
         for w in sparse_weights:
-            f.write(json.dumps(w, ensure_ascii=False) + "\n")
+            f.write(json.dumps({k: float(v) for k, v in w.items()}, ensure_ascii=False) + "\n")
     print(f"[sparse] saved to {SPARSE_FILE}", flush=True)
     return sparse_weights
 
