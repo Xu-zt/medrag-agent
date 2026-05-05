@@ -1,7 +1,12 @@
 """Qdrant collection creation helpers."""
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import (
+    Distance,
+    SparseIndexParams,
+    SparseVectorParams,
+    VectorParams,
+)
 
 
 def create_collection(
@@ -19,8 +24,13 @@ def create_collection(
         vectors_config={
             "dense": VectorParams(size=1024, distance=Distance.COSINE),
         },
+        sparse_vectors_config={
+            "sparse": SparseVectorParams(
+                index=SparseIndexParams(on_disk=False),
+            ),
+        },
     )
-    print(f"[qdrant] created collection '{name}'")
+    print(f"[qdrant] created collection '{name}' (dense + sparse)")
 
 
 __all__ = ["create_collection"]
