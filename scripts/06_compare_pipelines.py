@@ -1,40 +1,38 @@
 """Pipeline comparison script: P1 through P5 side-by-side with latency.
 
+Each pipeline runs in its own subprocess to avoid simultaneous model loading
+(BGE-M3 + BGE-Reranker together exceed Windows virtual memory in one process).
+
 Usage:
     python scripts/06_compare_pipelines.py
     python scripts/06_compare_pipelines.py --pipelines p1,p2,p3
+    python scripts/06_compare_pipelines.py --pipelines p1,p2,p3,p4,p5
     python scripts/06_compare_pipelines.py --k 5 --candidate-k 20
-    python scripts/06_compare_pipelines.py --output data/eval/my_run.json
+    python scripts/06_compare_pipelines.py --detailed
 
 Output:
     - Markdown table printed to stdout
-    - JSON saved to data/eval/pipeline_comparison.json (or --output path)
+    - JSON saved to data/eval/pipeline_comparison.json
 """
-# Windows + CUDA: preload pyarrow before torch to avoid access violation (0xC0000005)
+# Windows + CUDA: preload pyarrow before torch to avoid access violation (0xC0000005).
+# Must be at the very top of the file so it runs even in worker subprocess mode.
 import pyarrow.dataset  # noqa: F401
 
 import argparse
 import io
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Callable
 
-# Force UTF-8 output on Windows (avoids GBK codec errors)
+# Force UTF-8 output on Windows
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-8-sig"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-from qdrant_client import QdrantClient
-
-from medrag.index.embedder import BGEM3Embedder
-from medrag.retrieval.retriever import DenseRetriever, RetrievedChunk
-from medrag.retrieval.hybrid import HybridRetriever
-from medrag.retrieval.reranker import BGEReranker
-
 # ---------------------------------------------------------------------------
-# Sample queries (diverse medical sub-domains for meaningful ablation)
+# Sample queries — diverse medical sub-domains for meaningful ablation
 # ---------------------------------------------------------------------------
 SAMPLE_QUERIES = [
     "What is the typical spatial resolution of 3T MRI in clinical practice?",
@@ -44,108 +42,6 @@ SAMPLE_QUERIES = [
     "Describe the role of EGFR T790M mutation in NSCLC treatment resistance.",
 ]
 
-
-# ---------------------------------------------------------------------------
-# Pipeline factory — returns a callable (query, k) -> list[RetrievedChunk]
-# ---------------------------------------------------------------------------
-
-def build_pipelines(
-    qdrant: QdrantClient,
-    embedder: BGEM3Embedder,
-    reranker: BGEReranker,
-    candidate_k: int,
-    requested: list[str],
-) -> dict[str, Callable]:
-    available: dict[str, Callable] = {}
-
-    if "p1" in requested:
-        p1 = DenseRetriever(qdrant, embedder)
-        available["p1"] = lambda q, k, _r=p1: _r.retrieve(q, k=k)
-
-    if "p2" in requested:
-        p2 = HybridRetriever(qdrant, embedder, candidate_k=candidate_k)
-        available["p2"] = lambda q, k, _r=p2: _r.retrieve(q, k=k)
-
-    if "p3" in requested:
-        p3_retriever = HybridRetriever(qdrant, embedder, candidate_k=candidate_k)
-        available["p3"] = lambda q, k, _r=p3_retriever, _rr=reranker: _rr.rerank(
-            q, _r.retrieve(q, k=candidate_k), top_k=k
-        )
-
-    if "p4" in requested:
-        try:
-            from medrag.retrieval.hyde import HyDERetriever
-            p4 = HyDERetriever(qdrant, embedder)
-            available["p4"] = lambda q, k, _r=p4: _r.retrieve(q, k=k)
-        except ImportError:
-            print("[skip] p4: medrag.retrieval.hyde not found yet", file=sys.stderr)
-
-    if "p5" in requested:
-        try:
-            from medrag.retrieval.multi_query import MultiQueryRetriever
-            p5 = MultiQueryRetriever(qdrant, embedder)
-            available["p5"] = lambda q, k, _r=p5: _r.retrieve(q, k=k)
-        except ImportError:
-            print("[skip] p5: medrag.retrieval.multi_query not found yet", file=sys.stderr)
-
-    return available
-
-
-# ---------------------------------------------------------------------------
-# Run comparison
-# ---------------------------------------------------------------------------
-
-def run_comparison(
-    queries: list[str],
-    pipelines: dict[str, Callable],
-    k: int,
-) -> list[dict]:
-    """Return a list of result dicts, one per (query × pipeline) pair."""
-    results = []
-    total = len(queries) * len(pipelines)
-    done = 0
-
-    for query in queries:
-        for pid, fn in pipelines.items():
-            done += 1
-            print(f"[{done}/{total}] {pid.upper()} | {query[:60]}...", flush=True)
-            t0 = time.perf_counter()
-            try:
-                chunks = fn(query, k)
-                latency = time.perf_counter() - t0
-                results.append({
-                    "query": query,
-                    "pipeline": pid,
-                    "latency_s": round(latency, 3),
-                    "error": None,
-                    "hits": [
-                        {
-                            "rank": i + 1,
-                            "citation": c.citation,
-                            "score": round(float(c.score), 4),
-                            "snippet": c.text[:200],
-                        }
-                        for i, c in enumerate(chunks)
-                    ],
-                })
-            except Exception as exc:
-                latency = time.perf_counter() - t0
-                print(f"  [error] {exc}", file=sys.stderr)
-                results.append({
-                    "query": query,
-                    "pipeline": pid,
-                    "latency_s": round(latency, 3),
-                    "error": str(exc),
-                    "hits": [],
-                })
-
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Formatting
-# ---------------------------------------------------------------------------
-
 PIPELINE_LABELS = {
     "p1": "P1 Dense",
     "p2": "P2 Hybrid",
@@ -154,71 +50,206 @@ PIPELINE_LABELS = {
     "p5": "P5 Multi-Query",
 }
 
+# ---------------------------------------------------------------------------
+# Worker mode — called by subprocess with --worker flag
+# ---------------------------------------------------------------------------
+
+def _worker_main(pipeline: str, k: int, candidate_k: int) -> None:
+    """Run a single pipeline over all SAMPLE_QUERIES, print JSON to stdout."""
+
+    from qdrant_client import QdrantClient
+    from medrag.index.embedder import BGEM3Embedder
+
+    print(f"[worker:{pipeline}] loading embedder...", file=sys.stderr, flush=True)
+    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    embedder = BGEM3Embedder(device="cpu")
+
+    from medrag.retrieval.retriever import DenseRetriever, RetrievedChunk
+    from medrag.retrieval.hybrid import HybridRetriever
+
+    if pipeline == "p1":
+        retriever = DenseRetriever(qdrant, embedder)
+        fn = lambda q, k_: retriever.retrieve(q, k=k_)
+
+    elif pipeline == "p2":
+        retriever = HybridRetriever(qdrant, embedder, candidate_k=candidate_k)
+        fn = lambda q, k_: retriever.retrieve(q, k=k_)
+
+    elif pipeline == "p3":
+        from medrag.retrieval.reranker import BGEReranker
+        print(f"[worker:{pipeline}] loading reranker...", file=sys.stderr, flush=True)
+        reranker = BGEReranker(device="cpu")
+        hybrid = HybridRetriever(qdrant, embedder, candidate_k=candidate_k)
+        fn = lambda q, k_: reranker.rerank(q, hybrid.retrieve(q, k=candidate_k), top_k=k_)
+
+    elif pipeline == "p4":
+        from medrag.retrieval.hyde import HyDERetriever
+        hyde = HyDERetriever(qdrant, embedder)
+        fn = lambda q, k_: hyde.retrieve(q, k=k_)
+
+    elif pipeline == "p5":
+        from medrag.retrieval.multi_query import MultiQueryRetriever
+        mq = MultiQueryRetriever(qdrant, embedder)
+        fn = lambda q, k_: mq.retrieve(q, k=k_)
+
+    else:
+        print(json.dumps({"error": f"Unknown pipeline: {pipeline}"}))
+        return
+
+    print(f"[worker:{pipeline}] running {len(SAMPLE_QUERIES)} queries...", file=sys.stderr, flush=True)
+    results = []
+    for i, query in enumerate(SAMPLE_QUERIES, 1):
+        print(f"[worker:{pipeline}] {i}/{len(SAMPLE_QUERIES)} {query[:50]}...", file=sys.stderr, flush=True)
+        t0 = time.perf_counter()
+        try:
+            chunks = fn(query, k)
+            latency = time.perf_counter() - t0
+            results.append({
+                "query": query,
+                "pipeline": pipeline,
+                "latency_s": round(latency, 3),
+                "error": None,
+                "hits": [
+                    {
+                        "rank": j + 1,
+                        "citation": c.citation,
+                        "score": round(float(c.score), 4),
+                        "snippet": c.text[:200],
+                    }
+                    for j, c in enumerate(chunks)
+                ],
+            })
+        except Exception as exc:
+            latency = time.perf_counter() - t0
+            print(f"[worker:{pipeline}] ERROR: {exc}", file=sys.stderr, flush=True)
+            results.append({
+                "query": query,
+                "pipeline": pipeline,
+                "latency_s": round(latency, 3),
+                "error": str(exc),
+                "hits": [],
+            })
+
+    # Output results as JSON to stdout
+    print(json.dumps(results, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------------------
+# Subprocess runner — called from main process
+# ---------------------------------------------------------------------------
+
+def _run_pipeline_subprocess(
+    pipeline: str,
+    k: int,
+    candidate_k: int,
+    python_exe: str,
+    src_root: str,
+) -> list[dict]:
+    """Invoke this script with --worker in a subprocess, return parsed results."""
+    cmd = [
+        python_exe,
+        str(Path(__file__).resolve()),
+        "--worker", pipeline,
+        "--k", str(k),
+        "--candidate-k", str(candidate_k),
+    ]
+    env = {
+        **__import__("os").environ,
+        "PYTHONPATH": src_root,
+        "PYTHONIOENCODING": "utf-8",
+    }
+    print(f"\n[{pipeline.upper()}] starting subprocess...", flush=True)
+    t0 = time.perf_counter()
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=env)
+    elapsed = round(time.perf_counter() - t0, 1)
+
+    # Print stderr (progress messages) to console
+    for line in (proc.stderr or "").splitlines():
+        if line.strip():
+            print(f"  {line}", flush=True)
+
+    if proc.returncode != 0:
+        print(f"[{pipeline.upper()}] subprocess failed (exit {proc.returncode})", flush=True)
+        return [
+            {
+                "query": q,
+                "pipeline": pipeline,
+                "latency_s": 0.0,
+                "error": f"subprocess exit {proc.returncode}",
+                "hits": [],
+            }
+            for q in SAMPLE_QUERIES
+        ]
+
+    try:
+        results = json.loads(proc.stdout.strip())
+        print(f"[{pipeline.upper()}] done in {elapsed}s total", flush=True)
+        return results
+    except json.JSONDecodeError as e:
+        print(f"[{pipeline.upper()}] JSON parse error: {e}", flush=True)
+        print(f"  stdout: {proc.stdout[:200]}", flush=True)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
 
 def print_markdown_table(results: list[dict], pipelines: list[str]) -> None:
-    """Print a compact Markdown table: rows = queries, cols = pipelines."""
     queries = list(dict.fromkeys(r["query"] for r in results))
-
-    # Build lookup: (query, pipeline) -> result
     lookup = {(r["query"], r["pipeline"]): r for r in results}
 
-    # Header
     cols = [PIPELINE_LABELS.get(p, p.upper()) for p in pipelines]
-    header = "| Query | " + " | ".join(cols) + " |"
-    sep = "|---|" + "|".join(["---"] * len(cols)) + "|"
     print("\n## Pipeline Comparison Results\n")
-    print(header)
-    print(sep)
+    print("| Query | " + " | ".join(cols) + " |")
+    print("|---|" + "|".join(["---"] * len(cols)) + "|")
 
     for q in queries:
-        short_q = q[:55] + "..." if len(q) > 55 else q
+        short_q = q[:52] + "..." if len(q) > 52 else q
         row_parts = [f"`{short_q}`"]
         for p in pipelines:
             r = lookup.get((q, p))
             if r is None:
                 row_parts.append("—")
-            elif r["error"]:
+            elif r.get("error"):
                 row_parts.append("ERROR")
             else:
-                top_hits = ", ".join(h["citation"] for h in r["hits"][:3])
-                row_parts.append(f"{r['latency_s']}s · {top_hits}")
+                top = ", ".join(h["citation"] for h in r["hits"][:3])
+                row_parts.append(f"{r['latency_s']}s · {top}")
         print("| " + " | ".join(row_parts) + " |")
 
-    # Latency summary table
     print("\n## Latency Summary (avg over queries)\n")
-    print("| Pipeline | Avg Latency (s) | Min (s) | Max (s) |")
+    print("| Pipeline | Avg (s) | Min (s) | Max (s) |")
     print("|---|---|---|---|")
     for p in pipelines:
-        times = [r["latency_s"] for r in results if r["pipeline"] == p and not r["error"]]
+        times = [r["latency_s"] for r in results if r["pipeline"] == p and not r.get("error")]
         if not times:
             print(f"| {PIPELINE_LABELS.get(p, p.upper())} | — | — | — |")
         else:
             avg = round(sum(times) / len(times), 3)
-            print(
-                f"| {PIPELINE_LABELS.get(p, p.upper())} "
-                f"| {avg} | {min(times)} | {max(times)} |"
-            )
+            print(f"| {PIPELINE_LABELS.get(p, p.upper())} | {avg} | {min(times)} | {max(times)} |")
 
 
-def print_detailed_results(results: list[dict], k: int) -> None:
-    """Print per-query per-pipeline top-k hits for detailed inspection."""
+def print_detailed_results(results: list[dict]) -> None:
     queries = list(dict.fromkeys(r["query"] for r in results))
     lookup = {(r["query"], r["pipeline"]): r for r in results}
+    pipelines_seen = sorted(set(r["pipeline"] for r in results))
 
     print("\n## Detailed Results\n")
     for q in queries:
-        print(f"### Query: {q}\n")
-        for r in [lookup.get((q, p)) for p in sorted(set(r["pipeline"] for r in results))]:
+        print(f"### {q}\n")
+        for p in pipelines_seen:
+            r = lookup.get((q, p))
             if r is None:
                 continue
-            label = PIPELINE_LABELS.get(r["pipeline"], r["pipeline"].upper())
+            label = PIPELINE_LABELS.get(p, p.upper())
             print(f"**{label}** ({r['latency_s']}s)")
-            if r["error"]:
+            if r.get("error"):
                 print(f"> ERROR: {r['error']}")
             else:
                 for h in r["hits"]:
-                    print(f"  {h['rank']}. [{h['citation']}] score={h['score']:.4f}")
-                    print(f"     {h['snippet'][:150]}...")
+                    print(f"  {h['rank']}. `{h['citation']}` score={h['score']:.4f}")
+                    print(f"     _{h['snippet'][:140]}..._")
             print()
 
 
@@ -226,65 +257,56 @@ def print_detailed_results(results: list[dict], k: int) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--pipelines",
-        default="p1,p2,p3",
-        help="Comma-separated pipeline IDs to run (e.g. p1,p2,p3,p4,p5)",
-    )
-    parser.add_argument("--k", type=int, default=5, help="Top-k results per pipeline")
-    parser.add_argument("--candidate-k", type=int, default=20, help="Candidate pool for P2/P3")
-    parser.add_argument(
-        "--output",
-        default="data/eval/pipeline_comparison.json",
-        help="Path to save JSON output",
-    )
-    parser.add_argument("--detailed", action="store_true", help="Print per-query hit details")
+    parser.add_argument("--pipelines", default="p1,p2,p3",
+                        help="Comma-separated pipeline IDs (p1,p2,p3,p4,p5)")
+    parser.add_argument("--k", type=int, default=5)
+    parser.add_argument("--candidate-k", type=int, default=20)
+    parser.add_argument("--output", default="data/eval/pipeline_comparison.json")
+    parser.add_argument("--detailed", action="store_true")
+    # Internal: called by subprocess runner
+    parser.add_argument("--worker", metavar="PIPELINE",
+                        help="(internal) run as worker for this pipeline ID")
     args = parser.parse_args()
 
+    if args.worker:
+        _worker_main(args.worker, args.k, args.candidate_k)
+        return
+
     requested = [p.strip().lower() for p in args.pipelines.split(",")]
-    print(f"[init] pipelines: {requested}", flush=True)
+    print(f"[main] pipelines: {requested}  k={args.k}  candidate_k={args.candidate_k}")
+    print(f"[main] queries: {len(SAMPLE_QUERIES)}")
+    print(f"[main] each pipeline runs in a separate subprocess (memory isolation)\n")
 
-    # Initialize shared resources once
-    print("[init] connecting to Qdrant...", flush=True)
-    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    python_exe = sys.executable
+    src_root = str(Path(__file__).resolve().parent.parent / "src")
 
-    print("[init] loading BGE-M3 embedder (CPU)...", flush=True)
-    embedder = BGEM3Embedder(device="cpu")
+    all_results: list[dict] = []
+    for i, pid in enumerate(requested):
+        if i > 0:
+            # Brief pause between subprocesses to let the OS reclaim memory and
+            # page file from the previous model-loading process before the next
+            # one starts (avoids Windows 0xC0000005 on back-to-back heavy loads).
+            time.sleep(3)
+        results = _run_pipeline_subprocess(pid, args.k, args.candidate_k, python_exe, src_root)
+        all_results.extend(results)
 
-    reranker = None
-    if "p3" in requested:
-        print("[init] loading BGE reranker (CPU)...", flush=True)
-        reranker = BGEReranker(device="cpu")
-
-    pipelines = build_pipelines(qdrant, embedder, reranker, args.candidate_k, requested)
-    if not pipelines:
-        print("[error] No valid pipelines found. Exiting.", file=sys.stderr)
+    if not all_results:
+        print("[error] No results collected.", file=sys.stderr)
         sys.exit(1)
-
-    active = list(pipelines.keys())
-    print(f"[init] active pipelines: {active}", flush=True)
-    print(f"[init] queries: {len(SAMPLE_QUERIES)}, k={args.k}\n", flush=True)
-
-    results = run_comparison(SAMPLE_QUERIES, pipelines, args.k)
 
     # Save JSON
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
-        json.dump(
-            {"k": args.k, "candidate_k": args.candidate_k, "results": results},
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
+        json.dump({"k": args.k, "candidate_k": args.candidate_k, "results": all_results},
+                  f, ensure_ascii=False, indent=2)
     print(f"\n[saved] {out_path}")
 
-    # Print Markdown
-    print_markdown_table(results, active)
+    print_markdown_table(all_results, requested)
     if args.detailed:
-        print_detailed_results(results, args.k)
+        print_detailed_results(all_results)
 
 
 if __name__ == "__main__":
