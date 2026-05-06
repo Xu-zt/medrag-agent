@@ -240,3 +240,13 @@ data/eval/gd_*.jsonl
 
 # Debug / scratch scripts
 scripts/_debug_*.py
+scripts/_check_*.py
+
+# Weekly tutorial and planning documents (development-internal)
+docs/week*.md
+docs/hardware_smoke_test.md
+
+# Intermediate golden dataset generation files
+data/eval/gd_*.jsonl
+data/eval/p3_results.json
+data/eval/pipeline_comparison.json
