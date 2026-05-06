@@ -1,0 +1,41 @@
+{
+  "k": 5,
+  "candidate_k": 20,
+  "results": [
+    {
+      "query": "What is the typical spatial resolution of 3T MRI in clinical practice?",
+      "pipeline": "p3",
+      "latency_s": 0.0,
+      "error": "subprocess exit 3221225477",
+      "hits": []
+    },
+    {
+      "query": "What is the mechanism of action of PARP inhibitors in BRCA-mutated cancers?",
+      "pipeline": "p3",
+      "latency_s": 0.0,
+      "error": "subprocess exit 3221225477",
+      "hits": []
+    },
+    {
+      "query": "How do PI-RADS v2.1 criteria distinguish between score 3 and score 4?",
+      "pipeline": "p3",
+      "latency_s": 0.0,
+      "error": "subprocess exit 3221225477",
+      "hits": []
+    },
+    {
+      "query": "What are the contraindications for thrombolytic therapy in ischemic stroke?",
+      "pipeline": "p3",
+      "latency_s": 0.0,
+      "error": "subprocess exit 3221225477",
+      "hits": []
+    },
+    {
+      "query": "Describe the role of EGFR T790M mutation in NSCLC treatment resistance.",
+      "pipeline": "p3",
+      "latency_s": 0.0,
+      "error": "subprocess exit 3221225477",
+      "hits": []
+    }
+  ]
+}

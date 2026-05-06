@@ -1,0 +1,196 @@
+{
+  "k": 5,
+  "candidate_k": 20,
+  "results": [
+    {
+      "query": "What is the typical spatial resolution of 3T MRI in clinical practice?",
+      "pipeline": "p3",
+      "latency_s": 41.566,
+      "error": null,
+      "hits": [
+        {
+          "rank": 1,
+          "citation": "PMC:doc4",
+          "score": 1.8042,
+          "snippet": "The measurements were performed on archived magnetic resonance images. All image measurements were performed by a single experienced radiologist and subsequently reviewed by a second experienced radio"
+        },
+        {
+          "rank": 2,
+          "citation": "PMC:doc326",
+          "score": 1.0609,
+          "snippet": "In vitro MRI measurements were performed using a 3.0-T clinical MRI scanner (uMR880, United Imaging, Shanghai, China) with a flexible joint coil compatible with small sample imaging. T1 mapping images"
+        },
+        {
+          "rank": 3,
+          "citation": "PMC:doc326",
+          "score": 0.3358,
+          "snippet": "MRI of orthotopic liver tumor-bearing mice was performed under isoflurane anesthesia using a 3.0-T clinical MRI system (Ingenia; Philips Healthcare) equipped with a dedicated mouse radio frequency coi"
+        },
+        {
+          "rank": 4,
+          "citation": "PMC:doc212",
+          "score": 0.1192,
+          "snippet": "There are also UHF 7T NM-MRI studies aimed to distinguish PD from other neurodegenerative disorders or detect NM differences among PD subtypes. In a study by, SNc volume achieved 100% sensitivity and "
+        },
+        {
+          "rank": 5,
+          "citation": "PMC:doc325",
+          "score": 0.0446,
+          "snippet": "In image acquisition, DL reconstruction techniques significantly reduce magnetic resonance imaging (MRI) acquisition times without compromising image quality. Among clinical applications, musculoskele"
+        }
+      ]
+    },
+    {
+      "query": "What is the mechanism of action of PARP inhibitors in BRCA-mutated cancers?",
+      "pipeline": "p3",
+      "latency_s": 38.487,
+      "error": null,
+      "hits": [
+        {
+          "rank": 1,
+          "citation": "PMID:41992975",
+          "score": -0.5184,
+          "snippet": "Novel therapeutic strategies for metastatic castration‑resistant prostate cancer: Beyond androgen receptor pathway inhibition (Review).. Metastatic castration‑resistant prostate cancer (mCRPC) remains"
+        },
+        {
+          "rank": 2,
+          "citation": "PMC:doc295",
+          "score": -3.3887,
+          "snippet": "MRPL21-PARP1 axis promotes cisplatin resistance in head and neck squamous cell carcinoma by inhibiting autophagy through the PI3K/AKT/mTOR signaling pathway"
+        },
+        {
+          "rank": 3,
+          "citation": "PMID:41423932",
+          "score": -3.9257,
+          "snippet": "Nanotherapeutics for enhanced treatments for ovarian cancer: a comprehensive minireview.. As one of the most lethal gynecological malignancies, ovarian cancer (OC) significantly impacts the health and"
+        },
+        {
+          "rank": 4,
+          "citation": "PMC:doc108",
+          "score": -4.8139,
+          "snippet": "Clinical summary of fibroblast activation protein inhibitor-based radiopharmaceuticals: cancer and beyond"
+        },
+        {
+          "rank": 5,
+          "citation": "PMC:doc79",
+          "score": -5.3631,
+          "snippet": "Molecular mechanisms of targets and biomarkers in gastric cancer"
+        }
+      ]
+    },
+    {
+      "query": "How do PI-RADS v2.1 criteria distinguish between score 3 and score 4?",
+      "pipeline": "p3",
+      "latency_s": 35.209,
+      "error": null,
+      "hits": [
+        {
+          "rank": 1,
+          "citation": "PMID:41181975",
+          "score": -0.3542,
+          "snippet": "Diagnostic performance of magnetic resonance imaging-targeted biopsy for PI-RADS ≥3 peripheral zone lesions in multiparametric prostate magnetic resonance imaging: correlation with clinically signific"
+        },
+        {
+          "rank": 2,
+          "citation": "PMC:doc289",
+          "score": -0.8853,
+          "snippet": "Characteristic\tAll patients (n=305)\tClinically significant PCa (n=127)\tNo clinically significant PCa (n=178)\tP value\t \tAge (years), mean ± SD\t64.2 ± 8.7\t66.8 ± 8.1\t62.4 ± 8.8\t<0.001\t \tAge (years), med"
+        },
+        {
+          "rank": 3,
+          "citation": "PMC:doc289",
+          "score": -0.9387,
+          "snippet": "Systematic sampling employed the standard 12-core technique with six cores obtained from each prostatic lobe, while targeted biopsies utilized either cognitive registration or sophisticated software-a"
+        },
+        {
+          "rank": 4,
+          "citation": "PMID:42065784",
+          "score": -1.077,
+          "snippet": "Diagnostic value of intravoxel incoherent motion-based virtual MR elastography for differentiating prostate cancer from benign prostate lesion.. To evaluate the diagnostic efficacy of virtual magnetic"
+        },
+        {
+          "rank": 5,
+          "citation": "PMC:doc289",
+          "score": -1.2164,
+          "snippet": "Systematic error analysis identified 4 false positives predominantly involving inflammatory conditions mimicking malignancy, and 5 false negatives predominantly in PI-RADS 3 lesions and tumors <5 mm i"
+        }
+      ]
+    },
+    {
+      "query": "What are the contraindications for thrombolytic therapy in ischemic stroke?",
+      "pipeline": "p3",
+      "latency_s": 34.765,
+      "error": null,
+      "hits": [
+        {
+          "rank": 1,
+          "citation": "PMC:doc126",
+          "score": 3.4186,
+          "snippet": "Despite supplemental oxygen and pharmacological interventions, the patient’s tachycardia, tachypnea, and hypotension persisted, suggesting the onset of severe cardiorespiratory failure. The clinical t"
+        },
+        {
+          "rank": 2,
+          "citation": "PMC:doc204",
+          "score": -0.636,
+          "snippet": "Clinical consideration\t2019 AHA/ACC\t2024 AHA/ACC\t2025 SCAI/HRS\tESC\tEHRA\t \tPrimary LAA occlusion indication\tMay be considered for AF pts at increased stroke risk who have contraindications to long-term"
+        },
+        {
+          "rank": 3,
+          "citation": "PMC:doc150",
+          "score": -0.8215,
+          "snippet": "In this study, 32 post-stroke patients and 27 healthy controls (HCs) were recruited from Nanjing First Hospital between August 2020 and August 2023. The inclusion criteria were as follows: (1) age ≥ 4"
+        },
+        {
+          "rank": 4,
+          "citation": "PMC:doc204",
+          "score": -1.7027,
+          "snippet": "AC management following Watchman LAA closure is guided by an approach that balances efficacy with bleeding risk along with an individualized approach. The standard regimen begins with warfarin or DOAC"
+        },
+        {
+          "rank": 5,
+          "citation": "PMC:doc126",
+          "score": -1.761,
+          "snippet": "Our case report also underscores the importance of early diagnosis and timely initiation of anticoagulation or thrombolytic therapy, such as alteplase, which can significantly reduce the likelihood of"
+        }
+      ]
+    },
+    {
+      "query": "Describe the role of EGFR T790M mutation in NSCLC treatment resistance.",
+      "pipeline": "p3",
+      "latency_s": 35.434,
+      "error": null,
+      "hits": [
+        {
+          "rank": 1,
+          "citation": "PMID:42027638",
+          "score": 0.0418,
+          "snippet": "Targeting TROP-2 in treatment-resistant non-small cell lung cancer harboring the <i>KRAS</i> G12C mutation and TROP-2 upregulation: A case report.. Non-small cell lung cancer (NSCLC) with v-Ki-ras2 Ki"
+        },
+        {
+          "rank": 2,
+          "citation": "PMC:doc113",
+          "score": -0.574,
+          "snippet": "LCINS is characterized by distinctive driver mutations, risk factors, and treatment responses. PM2.5 (fine inhalable particles with a diameter of 2.5 micrometers or less) exposure is considered a risk"
+        },
+        {
+          "rank": 3,
+          "citation": "PMC:doc113",
+          "score": -0.7674,
+          "snippet": "Landscape of EGFR-Dependent and -Independent Resistance Mechanisms to Osimertinib and Continuation Therapy Beyond Progression in EGFR-Mutant NSCLC"
+        },
+        {
+          "rank": 4,
+          "citation": "PMC:doc194",
+          "score": -1.085,
+          "snippet": "Patients with EGFR, ALK, ROS1, RET, ERBB2, or NTRK mutations should be excluded from neoadjuvant immunotherapy due to minimal efficacy and increased risk of toxicity. For these patients, alternative s"
+        },
+        {
+          "rank": 5,
+          "citation": "PMC:doc194",
+          "score": -1.5288,
+          "snippet": "NSCLC"
+        }
+      ]
+    }
+  ]
+}
