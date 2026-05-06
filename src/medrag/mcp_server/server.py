@@ -1,170 +1,360 @@
-"""MedRAG-Agent MCP Server (Week 3).
+"""MedRAG-Agent MCP Server (Week 5 — LangGraph + Security).
 
-Exposes two tools to Claude Desktop / Claude Code:
-  - retrieve(query, pipeline, k) → list of retrieved document snippets
-  - ask(query, pipeline, k)      → LLM-generated answer with citations
+Tools exposed to Claude Desktop / Claude Code:
+  1. search_literature   — hybrid retrieval (P2/P3), returns document snippets
+  2. ask_agent           — full LangGraph agentic loop with rewrite + faithfulness check
+  3. evaluate_query      — grade how well a set of chunks answers a query (no generation)
+  4. search_visual       — stub for future visual / image search capability
+
+Security middleware (applied in order):
+  1. auth            — MEDRAG_LOCAL_TOKEN env var (disabled if not set → dev mode)
+  2. rate_limit      — 30 rpm global, 10 rpm for ask_agent
+  3. injection_guard — prompt injection detection before retrieval
+  4. pii             — PII redaction in audit log (query hash only stored)
+  5. audit           — structured JSON-Lines to data/logs/audit.jsonl
 
 Run for local development:
     mcp dev src/medrag/mcp_server/server.py
 
 Install into Claude Desktop (run once):
     mcp install src/medrag/mcp_server/server.py --name "MedRAG-Agent"
-
-Supported pipelines: p1, p2, p3, p4, p5
 """
 from __future__ import annotations
 
 # Windows + CUDA: preload pyarrow before torch to avoid access violation (0xC0000005)
 import pyarrow.dataset  # noqa: F401
 
+import io
+import logging
 import os
 import sys
+import time
 
 # Force UTF-8 for Windows terminals
-import io
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-8-sig"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from fastmcp import FastMCP
-from qdrant_client import QdrantClient
 
-from medrag.agent.generator import generate_answer
-from medrag.index.embedder import BGEM3Embedder
-from medrag.retrieval.hybrid import HybridRetriever
-from medrag.retrieval.hyde import HyDERetriever
-from medrag.retrieval.multi_query import MultiQueryRetriever
-from medrag.retrieval.reranker import BGEReranker
-from medrag.retrieval.retriever import DenseRetriever, RetrievedChunk
+from medrag.mcp_server.security import (
+    AuthError,
+    InjectionGuardError,
+    RateLimitError,
+    audit,
+    check_injection,
+    check_rate_limit,
+    log_tool_call,
+    sanitise_query,
+    verify_token,
+    wrap_document,
+)
 
-# ---------------------------------------------------------------------------
-# Lazy-initialised singletons — loaded on first tool call, not at import time
-# ---------------------------------------------------------------------------
-_qdrant: QdrantClient | None = None
-_embedder: BGEM3Embedder | None = None
-_reranker: BGEReranker | None = None
-_hyde: HyDERetriever | None = None
-_mq: MultiQueryRetriever | None = None
+logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+# ── Lazy singletons ────────────────────────────────────────────────────────────
+
+_retriever = None
+_reranker  = None
 
 
-def _get_resources():
-    global _qdrant, _embedder, _reranker, _hyde, _mq
-    if _qdrant is None:
-        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
-        _qdrant = QdrantClient(url=qdrant_url, timeout=30)
-        _embedder = BGEM3Embedder(device="cpu")
+def _get_retriever():
+    global _retriever
+    if _retriever is None:
+        from qdrant_client import QdrantClient
+        from medrag.index.embedder import BGEM3Embedder
+        from medrag.retrieval.hybrid import HybridRetriever
+        qdrant   = QdrantClient(url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"), timeout=30)
+        embedder = BGEM3Embedder(device="cpu")
+        _retriever = HybridRetriever(qdrant, embedder, candidate_k=20)
+    return _retriever
+
+
+def _get_reranker():
+    global _reranker
+    if _reranker is None:
+        from medrag.retrieval.reranker import BGEReranker
         _reranker = BGEReranker(device="cpu")
-        _hyde = HyDERetriever(_qdrant, _embedder)
-        _mq = MultiQueryRetriever(_qdrant, _embedder)
-    return _qdrant, _embedder, _reranker, _hyde, _mq
+    return _reranker
 
 
-def _run_pipeline(
-    query: str,
-    pipeline: str,
-    k: int,
-) -> list[RetrievedChunk]:
-    qdrant, embedder, reranker, hyde, mq = _get_resources()
-    pipeline = pipeline.lower().strip()
+# ── Security helpers ───────────────────────────────────────────────────────────
 
-    if pipeline == "p1":
-        return DenseRetriever(qdrant, embedder).retrieve(query, k=k)
+def _security_check(query: str, token: str, is_generate: bool = False) -> str:
+    """Run auth → rate_limit → injection_guard; return sanitised query.
 
-    if pipeline == "p2":
-        return HybridRetriever(qdrant, embedder).retrieve(query, k=k)
-
-    if pipeline == "p3":
-        candidates = HybridRetriever(qdrant, embedder, candidate_k=20).retrieve(query, k=20)
-        return reranker.rerank(query, candidates, top_k=k)
-
-    if pipeline == "p4":
-        return hyde.retrieve(query, k=k)
-
-    if pipeline == "p5":
-        return mq.retrieve(query, k=k)
-
-    raise ValueError(
-        f"Unknown pipeline '{pipeline}'. Choose from: p1, p2, p3, p4, p5."
-    )
+    Raises AuthError, RateLimitError, or InjectionGuardError on violation.
+    """
+    verify_token(token)
+    check_rate_limit(is_generate=is_generate)
+    return sanitise_query(query)
 
 
-# ---------------------------------------------------------------------------
-# MCP server definition
-# ---------------------------------------------------------------------------
+# ── MCP server ─────────────────────────────────────────────────────────────────
+
 mcp = FastMCP(
     "MedRAG-Agent",
     instructions=(
-        "MedRAG-Agent provides retrieval-augmented QA over a PubMed/PMC corpus. "
-        "Use 'retrieve' to get relevant document snippets, and 'ask' to get an "
-        "LLM-generated answer with inline citations. "
-        "Pipeline options: p1 (dense), p2 (hybrid RRF), p3 (hybrid+reranker, "
-        "best quality), p4 (HyDE, good for complex queries), p5 (multi-query, "
-        "best coverage)."
+        "MedRAG-Agent provides retrieval-augmented QA over a PubMed/PMC medical corpus. "
+        "Tools: "
+        "'search_literature' — retrieve relevant document snippets (fast, P2/P3); "
+        "'ask_agent' — full agentic loop: retrieves, grades, rewrites if needed, "
+        "generates a grounded answer with inline citations and faithfulness check; "
+        "'evaluate_query' — grade how well given context answers a query; "
+        "'search_visual' — stub for image/figure search (not yet implemented). "
+        "All tools require MEDRAG_LOCAL_TOKEN if set in server environment."
     ),
 )
 
 
 @mcp.tool()
-def retrieve(
+def search_literature(
     query: str,
-    pipeline: str = "p3",
     k: int = 5,
+    rerank: bool = True,
+    token: str = "",
 ) -> list[dict]:
-    """Retrieve top-k relevant medical document chunks for a query.
+    """Retrieve top-k relevant medical document chunks from PubMed/PMC.
+
+    Performs hybrid dense+sparse RRF retrieval (P2), optionally followed
+    by BGE cross-encoder reranking (P3 quality).
 
     Args:
-        query: The medical question or search query.
-        pipeline: Retrieval pipeline to use.
-            - p1: Dense-only (BGE-M3 cosine similarity) — fastest
-            - p2: Hybrid dense+sparse with RRF fusion — better for exact terms
-            - p3: Hybrid + cross-encoder reranker — highest precision (default)
-            - p4: HyDE — generates a hypothetical answer first, good for complex queries
-            - p5: Multi-Query — expands to 4 phrasings then fuses, best coverage
-        k: Number of documents to return (1-10).
+        query: Medical question or search query.
+        k: Number of documents to return (1–10, default 5).
+        rerank: If True (default), apply cross-encoder reranking for highest precision.
+        token: Optional auth token (MEDRAG_LOCAL_TOKEN).
 
     Returns:
-        List of dicts with keys: rank, citation, score, snippet, source, doc_id.
+        List of dicts: rank, citation, score, snippet (500 chars), source, doc_id.
     """
-    k = max(1, min(k, 10))
-    chunks = _run_pipeline(query, pipeline, k)
-    return [
-        {
-            "rank": i + 1,
-            "citation": c.citation,
-            "score": round(float(c.score), 4),
-            "snippet": c.text[:500],
-            "source": c.payload.get("source", ""),
-            "doc_id": c.payload.get("doc_id", ""),
-        }
-        for i, c in enumerate(chunks)
-    ]
+    t0 = time.perf_counter()
+    status = "ok"
+    try:
+        sanitised = _security_check(query, token, is_generate=False)
+        k = max(1, min(k, 10))
+
+        retriever = _get_retriever()
+        chunks = retriever.retrieve(sanitised, k=20 if rerank else k)
+
+        if rerank and chunks:
+            chunks = _get_reranker().rerank(sanitised, chunks, top_k=k)
+        else:
+            chunks = chunks[:k]
+
+        return [
+            {
+                "rank": i + 1,
+                "citation": c.citation,
+                "score": round(float(c.score), 4),
+                "snippet": c.text[:500],
+                "source": c.payload.get("source", ""),
+                "doc_id": c.payload.get("doc_id", ""),
+            }
+            for i, c in enumerate(chunks)
+        ]
+    except (AuthError, RateLimitError, InjectionGuardError) as exc:
+        status = f"rejected:{type(exc).__name__}"
+        raise
+    except Exception as exc:
+        status = f"error:{type(exc).__name__}"
+        raise
+    finally:
+        log_tool_call("search_literature", query, status,
+                      (time.perf_counter() - t0) * 1000)
 
 
 @mcp.tool()
-def ask(
+def ask_agent(
     query: str,
-    pipeline: str = "p3",
-    k: int = 5,
-) -> str:
-    """Answer a medical question using retrieved literature with inline citations.
+    thread_id: str = "default",
+    token: str = "",
+) -> dict:
+    """Answer a medical question using the full LangGraph agentic loop.
 
-    Retrieves relevant PubMed/PMC documents using the specified pipeline, then
-    generates a grounded answer using Qwen3-8B (running locally via Ollama).
-    The answer will cite sources as [PMID:xxx] or [PMC:xxx] inline.
+    Pipeline:
+      1. Hybrid retrieval (dense + sparse RRF)
+      2. Cross-encoder reranking
+      3. Relevance grading — rewrites query up to 2× if chunks are insufficient
+      4. Answer generation with inline citations
+      5. Faithfulness check — re-generates once if answer contains hallucinations
+
+    Multi-turn: supply the same thread_id across calls to maintain context.
+    The agent compresses history via rolling summarisation every 10 turns.
 
     Args:
-        query: The medical question to answer.
-        pipeline: Retrieval pipeline (p1/p2/p3/p4/p5). Default p3.
-        k: Number of source documents to retrieve (1-10). Default 5.
+        query: Medical question to answer.
+        thread_id: Session identifier for multi-turn memory (default: "default").
+        token: Optional auth token (MEDRAG_LOCAL_TOKEN).
 
     Returns:
-        A grounded answer string with inline citations.
+        Dict with keys: answer, citations, confidence, faithful, faithfulness_issues,
+        iterations (rewrites performed), regen_count.
     """
-    k = max(1, min(k, 10))
-    chunks = _run_pipeline(query, pipeline, k)
-    if not chunks:
-        return "No relevant documents found in the corpus for this query."
-    return generate_answer(query, chunks)
+    t0 = time.perf_counter()
+    status = "ok"
+    try:
+        sanitised = _security_check(query, token, is_generate=True)
+
+        from medrag.agent.graph import app
+
+        config = {"configurable": {"thread_id": thread_id}}
+        initial_state = {
+            "query": sanitised,
+            "rewritten_queries": [],
+            "retrieved_chunks": [],
+            "relevance_score": 0.0,
+            "grade_reason": "",
+            "rewrite_hint": "",
+            "iterations": 0,
+            "answer": "",
+            "citations": [],
+            "confidence": 0.0,
+            "faithful": False,
+            "faithfulness_issues": "",
+            "regen_count": 0,
+            "history": [{"query": sanitised, "answer": ""}],
+            "summary": "",
+        }
+
+        result = app.invoke(initial_state, config=config)
+
+        # Update history with the answer
+        if result.get("answer"):
+            history = result.get("history", [])
+            if history and history[-1].get("query") == sanitised:
+                history[-1]["answer"] = result["answer"]
+
+        return {
+            "answer": result.get("answer", ""),
+            "citations": result.get("citations", []),
+            "confidence": result.get("confidence", 0.0),
+            "faithful": result.get("faithful", False),
+            "faithfulness_issues": result.get("faithfulness_issues", ""),
+            "iterations": result.get("iterations", 0),
+            "regen_count": result.get("regen_count", 0),
+        }
+    except (AuthError, RateLimitError, InjectionGuardError) as exc:
+        status = f"rejected:{type(exc).__name__}"
+        raise
+    except Exception as exc:
+        status = f"error:{type(exc).__name__}"
+        raise
+    finally:
+        log_tool_call("ask_agent", query, status,
+                      (time.perf_counter() - t0) * 1000)
+
+
+@mcp.tool()
+def evaluate_query(
+    query: str,
+    context_chunks: list[str],
+    token: str = "",
+) -> dict:
+    """Grade whether provided context chunks can fully answer a query.
+
+    Useful for debugging retrieval quality or testing custom contexts.
+    Uses the same LLM grader as the agentic loop (thinking mode ON).
+
+    Args:
+        query: The medical question to evaluate against.
+        context_chunks: List of document text strings to evaluate.
+        token: Optional auth token (MEDRAG_LOCAL_TOKEN).
+
+    Returns:
+        Dict: relevant (bool), score (0–1), reason (str), rewrite_hint (str).
+    """
+    t0 = time.perf_counter()
+    status = "ok"
+    try:
+        sanitised = _security_check(query, token, is_generate=False)
+
+        from medrag.agent.nodes import grade_relevance
+        from medrag.retrieval.retriever import RetrievedChunk
+
+        # Wrap plain strings as minimal RetrievedChunk objects
+        chunks = [
+            RetrievedChunk(
+                chunk_id=f"user-{i}",
+                text=c,
+                score=1.0,
+                payload={"source": "user", "doc_id": f"user-{i}"},
+            )
+            for i, c in enumerate(context_chunks[:10])  # cap at 10
+        ]
+
+        # Build minimal state for the grade node
+        state = {
+            "query": sanitised,
+            "retrieved_chunks": chunks,
+            "relevance_score": 0.0,
+            "grade_reason": "",
+            "rewrite_hint": "",
+            "iterations": 0,
+            "rewritten_queries": [],
+            "answer": "",
+            "citations": [],
+            "confidence": 0.0,
+            "faithful": False,
+            "faithfulness_issues": "",
+            "regen_count": 0,
+            "history": [],
+            "summary": "",
+        }
+
+        result = grade_relevance(state)
+        return {
+            "relevant": result["relevance_score"] >= 0.6,
+            "score": result["relevance_score"],
+            "reason": result["grade_reason"],
+            "rewrite_hint": result["rewrite_hint"],
+        }
+    except (AuthError, RateLimitError, InjectionGuardError) as exc:
+        status = f"rejected:{type(exc).__name__}"
+        raise
+    except Exception as exc:
+        status = f"error:{type(exc).__name__}"
+        raise
+    finally:
+        log_tool_call("evaluate_query", query, status,
+                      (time.perf_counter() - t0) * 1000)
+
+
+@mcp.tool()
+def search_visual(
+    query: str,
+    modality: str = "figure",
+    k: int = 5,
+    token: str = "",
+) -> dict:
+    """[STUB] Search for medical images, figures, or tables.
+
+    This tool is not yet implemented. It will support searching PMC
+    Open Access figures, radiology images, and anatomical diagrams
+    when the visual index is built in a future release.
+
+    Args:
+        query: Description of the image or figure to search for.
+        modality: Type of visual content: "figure", "table", "radiology".
+        k: Number of results to return (1–10).
+        token: Optional auth token (MEDRAG_LOCAL_TOKEN).
+
+    Returns:
+        Dict with status="not_implemented" and a message.
+    """
+    _security_check(query, token, is_generate=False)
+    log_tool_call("search_visual", query, "stub", 0.0)
+    return {
+        "status": "not_implemented",
+        "message": (
+            "Visual search is not yet available. "
+            "The PMC figure index is planned for a future release. "
+            "Use search_literature for text-based retrieval."
+        ),
+        "modality": modality,
+        "k": k,
+    }
 
 
 if __name__ == "__main__":

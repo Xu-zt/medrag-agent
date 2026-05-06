@@ -1,0 +1,376 @@
+"""LangGraph node functions for MedRAG-Agent.
+
+Each node receives the full AgentState and returns a *partial* dict
+with only the fields it modifies.  Heavy resources (embedder, Qdrant,
+reranker) are created lazily at first call so that importing this module
+does not spin up GPU-heavy processes.
+
+Node responsibilities
+---------------------
+route_query       — classify query as factual / synthesis / multihop
+hybrid_retrieve   — dense+sparse RRF retrieval
+rerank_chunks     — cross-encoder reranking (P3 quality)
+grade_relevance   — score whether chunks can answer the query
+rewrite_query     — rewrite a failed query; increment iterations
+generate_answer_node — structured-JSON answer generation
+check_faithfulness — verify every claim is grounded in context
+summarize_history  — L2 memory: compress history when > 10 turns
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from functools import lru_cache
+from typing import Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from medrag.agent.llms import make_llm_fast, make_llm_think
+from medrag.agent.prompts import (
+    CHECK_SYSTEM,
+    CHECK_USER,
+    GENERATE_SYSTEM,
+    GENERATE_USER,
+    GRADE_SYSTEM,
+    GRADE_USER,
+    REWRITE_SYSTEM,
+    REWRITE_USER,
+    ROUTER_SYSTEM,
+    ROUTER_USER,
+    SUMMARIZE_SYSTEM,
+    SUMMARIZE_USER,
+)
+from medrag.agent.state import AgentState
+from medrag.agent.utils import strip_thinking
+from medrag.retrieval.retriever import RetrievedChunk
+
+logger = logging.getLogger(__name__)
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+
+MAX_REWRITES = 2          # up to 3 retrieval attempts total
+MAX_REGEN    = 1          # up to 2 generation attempts total
+GRADE_THRESHOLD = 0.6     # relevance score below this triggers rewrite
+HISTORY_SUMMARIZE_EVERY = 10  # L2 compression after this many turns
+CANDIDATE_K  = 20         # hybrid retrieval candidate pool
+TOP_K        = 5          # chunks passed to generator
+
+# ── Lazy resource factories ────────────────────────────────────────────────────
+
+@lru_cache(maxsize=1)
+def _get_retriever():
+    """Singleton HybridRetriever — created once per process."""
+    from qdrant_client import QdrantClient
+    from medrag.index.embedder import BGEM3Embedder
+    from medrag.retrieval.hybrid import HybridRetriever
+
+    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    embedder = BGEM3Embedder(device="cpu")
+    return HybridRetriever(qdrant, embedder, candidate_k=CANDIDATE_K)
+
+
+@lru_cache(maxsize=1)
+def _get_reranker():
+    """Singleton BGEReranker — created once per process."""
+    from medrag.retrieval.reranker import BGEReranker
+    return BGEReranker(device="cpu")
+
+
+# ── JSON parsing helper ────────────────────────────────────────────────────────
+
+def _parse_json(text: str) -> dict[str, Any]:
+    """Strip markdown fences and parse JSON; return {} on failure."""
+    text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group())
+            except json.JSONDecodeError:
+                pass
+    logger.warning("Failed to parse LLM JSON output: %s", text[:200])
+    return {}
+
+
+def _format_context(chunks: list[RetrievedChunk]) -> str:
+    """Format retrieved chunks into numbered context block."""
+    parts = [
+        f"[{i+1}] {c.citation} (score={c.score:.3f}):\n{c.text}"
+        for i, c in enumerate(chunks)
+    ]
+    return "\n\n".join(parts)
+
+
+# ── Node: route_query ──────────────────────────────────────────────────────────
+
+def route_query(state: AgentState) -> dict:
+    """Classify the query as factual / synthesis / multihop.
+
+    Uses llm_fast (thinking=OFF) — just a lightweight classification.
+    Result stored in state but not used for routing in the graph edges;
+    it is preserved for audit / downstream use.
+    """
+    llm = make_llm_fast()
+    query = state["query"]
+
+    resp = llm.invoke([
+        SystemMessage(content=ROUTER_SYSTEM),
+        HumanMessage(content=ROUTER_USER.format(query=query)),
+    ])
+    raw = strip_thinking(resp.content)
+    parsed = _parse_json(raw)
+
+    query_type = parsed.get("type", "factual")
+    logger.info("[route] query_type=%s  reason=%s", query_type, parsed.get("reason", ""))
+
+    # Initialise iteration counters if this is a fresh call
+    return {
+        "query": query,
+        "iterations": state.get("iterations", 0),
+        "regen_count": state.get("regen_count", 0),
+    }
+
+
+# ── Node: hybrid_retrieve ──────────────────────────────────────────────────────
+
+def hybrid_retrieve(state: AgentState) -> dict:
+    """Hybrid dense+sparse RRF retrieval.
+
+    Returns top-CANDIDATE_K candidates (reranker will shrink to TOP_K).
+    If retrieval fails, returns empty list so grade node can handle it.
+    """
+    query = state["query"]
+    logger.info("[retrieve] query=%s", query[:80])
+
+    try:
+        retriever = _get_retriever()
+        chunks = retriever.retrieve(query, k=CANDIDATE_K)
+    except Exception as exc:
+        logger.error("[retrieve] error: %s", exc)
+        chunks = []
+
+    logger.info("[retrieve] got %d candidates", len(chunks))
+    return {"retrieved_chunks": chunks}
+
+
+# ── Node: rerank_chunks ────────────────────────────────────────────────────────
+
+def rerank_chunks(state: AgentState) -> dict:
+    """Cross-encoder reranking: shrink CANDIDATE_K → TOP_K."""
+    query = state["query"]
+    chunks = state.get("retrieved_chunks", [])
+
+    if not chunks:
+        return {"retrieved_chunks": []}
+
+    try:
+        reranker = _get_reranker()
+        reranked = reranker.rerank(query, chunks, top_k=TOP_K)
+    except Exception as exc:
+        logger.error("[rerank] error: %s — falling back to top-%d by score", exc, TOP_K)
+        reranked = sorted(chunks, key=lambda c: -c.score)[:TOP_K]
+
+    logger.info("[rerank] kept top %d chunks", len(reranked))
+    return {"retrieved_chunks": reranked}
+
+
+# ── Node: grade_relevance ──────────────────────────────────────────────────────
+
+def grade_relevance(state: AgentState) -> dict:
+    """Score whether the retrieved chunks can fully answer the query.
+
+    Uses llm_think (thinking=ON) for careful reasoning.
+    Returns relevance_score (0-1), grade_reason, rewrite_hint.
+    """
+    llm = make_llm_think()
+    query = state["query"]
+    chunks = state.get("retrieved_chunks", [])
+    context = _format_context(chunks) if chunks else "(no chunks retrieved)"
+
+    resp = llm.invoke([
+        SystemMessage(content=GRADE_SYSTEM),
+        HumanMessage(content=GRADE_USER.format(query=query, context=context)),
+    ])
+    raw = strip_thinking(resp.content)
+    parsed = _parse_json(raw)
+
+    score       = float(parsed.get("score", 0.0))
+    relevant    = bool(parsed.get("relevant", score >= GRADE_THRESHOLD))
+    reason      = str(parsed.get("reason", ""))
+    rewrite_hint = str(parsed.get("rewrite_hint", ""))
+
+    # If LLM says relevant=true but score is low, trust the boolean
+    if relevant and score < GRADE_THRESHOLD:
+        score = GRADE_THRESHOLD
+
+    logger.info("[grade] score=%.2f relevant=%s", score, relevant)
+    return {
+        "relevance_score": score,
+        "grade_reason": reason,
+        "rewrite_hint": rewrite_hint,
+    }
+
+
+# ── Node: rewrite_query ────────────────────────────────────────────────────────
+
+def rewrite_query(state: AgentState) -> dict:
+    """Rewrite a failed query to improve retrieval.
+
+    Uses llm_think (thinking=ON).  Increments the iterations counter.
+    Also appends the old query to rewritten_queries for audit.
+    """
+    llm = make_llm_think()
+    original_query = state["query"]
+    previous_rewrites = state.get("rewritten_queries", [])
+    reason = state.get("grade_reason", "")
+    hint   = state.get("rewrite_hint", "")
+
+    resp = llm.invoke([
+        SystemMessage(content=REWRITE_SYSTEM),
+        HumanMessage(content=REWRITE_USER.format(
+            query=original_query,
+            previous_rewrites=", ".join(previous_rewrites) or "none",
+            reason=reason,
+            hint=hint,
+        )),
+    ])
+    new_query = strip_thinking(resp.content).strip().strip('"').strip("'")
+
+    iterations = state.get("iterations", 0) + 1
+    logger.info("[rewrite] iter=%d  new_query=%s", iterations, new_query[:80])
+
+    return {
+        "query": new_query,
+        "rewritten_queries": [new_query],   # Annotated[list, add] — appends
+        "iterations": iterations,
+    }
+
+
+# ── Node: generate_answer_node ─────────────────────────────────────────────────
+
+def generate_answer_node(state: AgentState) -> dict:
+    """Generate a structured JSON answer from retrieved context.
+
+    Uses llm_fast (thinking=OFF) — retrieval-grounded, low latency.
+    Output schema: {answer, citations, confidence}
+    """
+    llm = make_llm_fast()
+    query  = state["query"]
+    chunks = state.get("retrieved_chunks", [])
+    context = _format_context(chunks) if chunks else "(no context available)"
+
+    resp = llm.invoke([
+        SystemMessage(content=GENERATE_SYSTEM),
+        HumanMessage(content=GENERATE_USER.format(query=query, context=context)),
+    ])
+    raw = strip_thinking(resp.content)
+    parsed = _parse_json(raw)
+
+    answer     = str(parsed.get("answer", raw))  # fallback: raw text
+    citations  = list(parsed.get("citations", []))
+    confidence = float(parsed.get("confidence", 0.5))
+
+    logger.info("[generate] confidence=%.2f citations=%s", confidence, citations)
+    return {
+        "answer": answer,
+        "citations": citations,
+        "confidence": confidence,
+    }
+
+
+# ── Node: check_faithfulness ───────────────────────────────────────────────────
+
+def check_faithfulness(state: AgentState) -> dict:
+    """Verify that every factual claim in the answer is grounded in context.
+
+    Uses llm_think (thinking=ON) for careful cross-referencing.
+    Returns faithful (bool) and faithfulness_issues (str).
+    """
+    llm = make_llm_think()
+    chunks = state.get("retrieved_chunks", [])
+    answer = state.get("answer", "")
+    context = _format_context(chunks) if chunks else "(no context)"
+
+    resp = llm.invoke([
+        SystemMessage(content=CHECK_SYSTEM),
+        HumanMessage(content=CHECK_USER.format(context=context, answer=answer)),
+    ])
+    raw = strip_thinking(resp.content)
+    parsed = _parse_json(raw)
+
+    faithful = bool(parsed.get("faithful", False))
+    issues   = str(parsed.get("issues", ""))
+
+    logger.info("[check] faithful=%s", faithful)
+    return {
+        "faithful": faithful,
+        "faithfulness_issues": issues,
+    }
+
+
+# ── Node: increment_regen ─────────────────────────────────────────────────────
+
+def increment_regen(state: AgentState) -> dict:
+    """Increment the regen counter before looping back to generate.
+
+    Separated from check_faithfulness so the counter update is persisted
+    correctly by the LangGraph checkpointer (edge functions are read-only).
+    """
+    new_count = state.get("regen_count", 0) + 1
+    logger.info("[regen] regen_count → %d", new_count)
+    return {"regen_count": new_count}
+
+
+# ── Node: summarize_history ────────────────────────────────────────────────────
+
+def summarize_history(state: AgentState) -> dict:
+    """L2 memory: compress conversation history into a rolling summary.
+
+    Triggered when len(history) is a multiple of HISTORY_SUMMARIZE_EVERY.
+    Uses llm_fast (thinking=OFF) — compression, not reasoning.
+    Returns updated summary; history list itself is NOT cleared here
+    (LangGraph checkpointer preserves it for crash recovery).
+    """
+    history  = state.get("history", [])
+    summary  = state.get("summary", "")
+
+    if not history:
+        return {}
+
+    # Format new turns to incorporate
+    turns_text = "\n".join(
+        f"Q: {h.get('query', '')}\nA: {h.get('answer', '')}"
+        for h in history[-(HISTORY_SUMMARIZE_EVERY):]
+    )
+
+    llm = make_llm_fast()
+    resp = llm.invoke([
+        SystemMessage(content=SUMMARIZE_SYSTEM),
+        HumanMessage(content=SUMMARIZE_USER.format(
+            previous_summary=summary or "(none)",
+            turns=turns_text,
+        )),
+    ])
+    new_summary = strip_thinking(resp.content).strip()
+    logger.info("[summarize] updated summary (%d chars)", len(new_summary))
+    return {"summary": new_summary}
+
+
+__all__ = [
+    "route_query",
+    "hybrid_retrieve",
+    "rerank_chunks",
+    "grade_relevance",
+    "rewrite_query",
+    "generate_answer_node",
+    "check_faithfulness",
+    "increment_regen",
+    "summarize_history",
+    "MAX_REWRITES",
+    "MAX_REGEN",
+    "GRADE_THRESHOLD",
+    "HISTORY_SUMMARIZE_EVERY",
+]
