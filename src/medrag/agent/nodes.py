@@ -42,7 +42,7 @@ from medrag.agent.prompts import (
     SUMMARIZE_USER,
 )
 from medrag.agent.state import AgentState
-from medrag.agent.utils import strip_thinking
+from medrag.agent.utils import build_answer_from_claims, strip_thinking, validate_citations
 from medrag.retrieval.retriever import RetrievedChunk
 
 logger = logging.getLogger(__name__)
@@ -96,10 +96,14 @@ def _parse_json(text: str) -> dict[str, Any]:
 
 
 def _format_context(chunks: list[RetrievedChunk]) -> str:
-    """Format retrieved chunks into numbered context block."""
+    """Format retrieved chunks for the generate prompt.
+
+    Each chunk is prefixed with its citation key in square brackets so the
+    model can reference it exactly in the 'cite' field of each claim.
+    """
     parts = [
-        f"[{i+1}] {c.citation} (score={c.score:.3f}):\n{c.text}"
-        for i, c in enumerate(chunks)
+        f"[{c.citation}] (score={c.score:.3f}):\n{c.text}"
+        for c in chunks
     ]
     return "\n\n".join(parts)
 
@@ -252,10 +256,19 @@ def rewrite_query(state: AgentState) -> dict:
 # ── Node: generate_answer_node ─────────────────────────────────────────────────
 
 def generate_answer_node(state: AgentState) -> dict:
-    """Generate a structured JSON answer from retrieved context.
+    """Generate a citation-grounded answer from retrieved context.
 
     Uses llm_fast (thinking=OFF) — retrieval-grounded, low latency.
-    Output schema: {answer, citations, confidence}
+
+    Pipeline:
+      1. LLM outputs {"claims": [{"text":…, "cite":[…]}], "confidence":…}
+      2. validate_citations() filters out claims whose cite keys are not in
+         the current retrieval context (prevents hallucinated references).
+      3. build_answer_from_claims() reconstructs a readable answer string
+         with inline [PMID:xxx] / [PMC:xxx] markers.
+      4. If 0 claims survive validation, the answer is set to a disclaimer
+         and confidence=0.0; check_faithfulness will mark it unfaithful,
+         triggering one regen attempt via the graph's inc_regen path.
     """
     llm = make_llm_fast()
     query  = state["query"]
@@ -269,11 +282,31 @@ def generate_answer_node(state: AgentState) -> dict:
     raw = strip_thinking(resp.content)
     parsed = _parse_json(raw)
 
-    answer     = str(parsed.get("answer", raw))  # fallback: raw text
-    citations  = list(parsed.get("citations", []))
-    confidence = float(parsed.get("confidence", 0.5))
+    # ── Citation-grounded validation ──────────────────────────────────────
+    claims_raw: list[dict] = parsed.get("claims", [])
+    confidence: float = float(parsed.get("confidence", 0.5))
 
-    logger.info("[generate] confidence=%.2f citations=%s", confidence, citations)
+    if not claims_raw:
+        # LLM returned old-style {answer, citations} or empty claims
+        # Graceful fallback: wrap entire answer as a single unverified claim
+        legacy_answer = str(parsed.get("answer", raw))
+        legacy_cites  = list(parsed.get("citations", []))
+        if legacy_answer and legacy_cites:
+            claims_raw = [{"text": legacy_answer, "cite": legacy_cites}]
+            logger.info("[generate] legacy answer format detected, wrapping as single claim")
+        else:
+            logger.warning("[generate] LLM returned no claims and no legacy answer")
+
+    validated_claims = validate_citations(claims_raw, chunks)
+    answer, citations = build_answer_from_claims(validated_claims)
+
+    if not validated_claims:
+        # All claims failed citation validation — signal to check node
+        confidence = 0.0
+        logger.warning("[generate] all claims failed citation validation — answer set to disclaimer")
+
+    logger.info("[generate] confidence=%.2f  valid_claims=%d  citations=%s",
+                confidence, len(validated_claims), citations)
     return {
         "answer": answer,
         "citations": citations,
