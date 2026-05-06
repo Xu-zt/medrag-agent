@@ -1,0 +1,43 @@
+"""
+VeritasMed FastAPI application.
+
+Start with:
+    uvicorn src.medrag.api.app:app --reload --port 8000
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from medrag.api.routes import ask, chunk, corpus, document, history, search
+
+app = FastAPI(
+    title="VeritasMed API",
+    description="Self-verifying medical literature QA backend",
+    version="1.0.0",
+)
+
+# ── CORS (allow frontend dev server) ────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── API routes ───────────────────────────────────────────────────────────────
+app.include_router(ask.router)
+app.include_router(search.router)
+app.include_router(document.router)
+app.include_router(chunk.router)
+app.include_router(history.router)
+app.include_router(corpus.router)
+
+# ── Serve built frontend (production) ───────────────────────────────────────
+_DIST = Path(__file__).parent.parent.parent.parent / "frontend" / "dist"
+if _DIST.exists():
+    app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="frontend")
