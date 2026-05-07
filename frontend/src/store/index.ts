@@ -52,6 +52,10 @@ export interface AppState {
   // Selected chunk (for EvidencePanel highlight)
   selectedChunkId: string | null
   setSelectedChunkId: (id: string | null) => void
+
+  // Error message
+  errorMessage: string | null
+  setErrorMessage: (msg: string | null) => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -88,4 +92,7 @@ export const useStore = create<AppState>((set) => ({
 
   selectedChunkId: null,
   setSelectedChunkId: (id) => set({ selectedChunkId: id }),
+
+  errorMessage: null,
+  setErrorMessage: (msg) => set({ errorMessage: msg }),
 }))

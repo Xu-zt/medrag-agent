@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { CheckCircle, AlertTriangle, Clock, RefreshCw } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Clock, RefreshCw, XCircle } from 'lucide-react'
 import { useStore, chunkColor } from '../store'
 
 // ── Citation colour badges ─────────────────────────────────────────────────
@@ -135,9 +135,24 @@ function FaithfulnessBadge({
 // ── AnswerPanel ────────────────────────────────────────────────────────────
 
 export function AnswerPanel() {
-  const { result, streamingAnswer, isStreaming, setSelectedChunkId } = useStore()
+  const { result, streamingAnswer, isStreaming, setSelectedChunkId, errorMessage } = useStore()
 
   const displayText = result?.answer ?? streamingAnswer
+
+  // Error banner
+  if (errorMessage && !isStreaming) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-8">
+        <div className="w-full max-w-prose bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3">
+          <XCircle size={18} className="text-rose-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-rose-800 mb-1">Error</p>
+            <p className="text-xs text-rose-700 font-mono">{errorMessage}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   function handleCiteClick(citation: string) {
     // Find the chunk by citation and scroll to / highlight it in EvidencePanel

@@ -33,6 +33,7 @@ export function useAgentStream() {
     clearStreamingAnswer,
     setResult,
     setSelectedChunkId,
+    setErrorMessage,
   } = useStore()
 
   const send = useCallback(() => {
@@ -45,6 +46,7 @@ export function useAgentStream() {
     clearStreamingAnswer()
     setResult(null)
     setSelectedChunkId(null)
+    setErrorMessage(null)
     setStreaming(true)
 
     const socket = new WebSocket(wsAskUrl())
@@ -64,11 +66,16 @@ export function useAgentStream() {
       handleEvent(ev)
     }
 
-    socket.onerror = () => {
+    socket.onerror = (e) => {
+      console.error('WebSocket error', e)
+      setErrorMessage('WebSocket connection error — is the backend running on port 8000?')
       setStreaming(false)
     }
 
-    socket.onclose = () => {
+    socket.onclose = (e) => {
+      if (e.code !== 1000 && e.code !== 1001) {
+        console.warn('WebSocket closed unexpectedly', e.code, e.reason)
+      }
       setStreaming(false)
     }
 
@@ -151,6 +158,9 @@ export function useAgentStream() {
       }
 
       if (event === 'error') {
+        const msg = (data as { message?: string }).message ?? 'Unknown server error'
+        console.error('Agent error event:', msg)
+        setErrorMessage(`Server error: ${msg}`)
         setStreaming(false)
       }
     }
@@ -159,7 +169,7 @@ export function useAgentStream() {
     setStreaming, setTimeline, updateNode, pushNode,
     pushLiveChunk, clearLiveChunks,
     appendAnswerToken, clearStreamingAnswer,
-    setResult, setSelectedChunkId,
+    setResult, setSelectedChunkId, setErrorMessage,
   ])
 
   const cancel = useCallback(() => {
