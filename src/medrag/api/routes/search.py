@@ -18,12 +18,16 @@ router = APIRouter()
 
 @lru_cache(maxsize=1)
 def _retriever() -> HybridRetriever:
-    return HybridRetriever()
+    from qdrant_client import QdrantClient
+    from medrag.index.embedder import BGEM3Embedder
+    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    embedder = BGEM3Embedder(device="cpu")
+    return HybridRetriever(qdrant, embedder, candidate_k=20)
 
 
 @lru_cache(maxsize=1)
 def _reranker() -> BGEReranker:
-    return BGEReranker()
+    return BGEReranker(device="cpu")
 
 
 @router.get("/api/search", response_model=SearchResponse)
@@ -38,7 +42,7 @@ async def search(
 
     # Retrieve more candidates for reranking (p3) or direct (p2)
     candidate_k = 20 if pipeline == "p3" else k
-    raw_chunks = retriever.retrieve(q, top_k=candidate_k)
+    raw_chunks = retriever.retrieve(q, k=candidate_k)
 
     if pipeline == "p3":
         reranker = _reranker()

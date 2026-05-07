@@ -33,7 +33,7 @@ try {
 Write-Host ""
 Write-Host "Starting FastAPI backend on http://localhost:$BackendPort ..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit", "-Command",
-    "conda activate medrag; cd '$PSScriptRoot'; uvicorn src.medrag.api.app:app --reload --port $BackendPort"
+    "conda activate medrag; Set-Location '$PSScriptRoot'; uvicorn medrag.api.app:app --reload --port $BackendPort"
 
 Start-Sleep -Seconds 2
 
