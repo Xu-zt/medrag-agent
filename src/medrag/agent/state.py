@@ -17,6 +17,10 @@ class AgentState(TypedDict):
     query: str
     """Current (possibly rewritten) query sent to the retriever."""
 
+    query_type: str
+    """Router classification: 'factual' | 'synthesis' | 'multihop'.
+    Used by grade_relevance for dynamic threshold selection."""
+
     rewritten_queries: Annotated[list[str], add]
     """Accumulates each query rewrite for audit / tracing."""
 
@@ -36,7 +40,7 @@ class AgentState(TypedDict):
 
     iterations: int
     """Rewrite counter. Starts at 0; incremented inside rewrite node.
-    Hard cap: MAX_REWRITES = 2 (3 retrieval attempts total)."""
+    Hard cap: MAX_REWRITES = 1 (2 retrieval attempts total)."""
 
     # ── Generation ────────────────────────────────────────────────────────────
     answer: str

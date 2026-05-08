@@ -242,13 +242,13 @@ def main() -> None:
         gen_latency = time.perf_counter() - t1
 
         context_text = "\n\n".join(
-            f"[{j+1}] {c.citation}: {c.text[:1000]}" for j, c in enumerate(chunks)
+            f"[{j+1}] {c.citation}: {c.text[:2000]}" for j, c in enumerate(chunks)
         )
 
         # 3. Judge: faithfulness
         try:
             raw = _chat(client, args.model, FAITHFULNESS_SYS,
-                        FAITHFULNESS_USR.format(context=context_text[:6000],
+                        FAITHFULNESS_USR.format(context=context_text[:10000],
                                                 question=question, answer=generated))
             faith_score, faith_issues = _parse_score(raw)
         except Exception:

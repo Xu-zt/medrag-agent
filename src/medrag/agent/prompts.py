@@ -45,6 +45,8 @@ REWRITE_SYSTEM = (
     "Analyse why it failed and rewrite the query to improve retrieval. "
     "Strategies: expand acronyms, add MeSH synonyms, break into sub-questions, "
     "or change perspective (e.g. symptom → disease, drug → mechanism). "
+    "CRITICAL: The rewritten query MUST preserve the original question's intent. "
+    "Keep at least 60% of the original keywords. "
     "Output ONLY the rewritten query string — no explanation, no JSON."
 )
 
@@ -96,6 +98,36 @@ Retrieved documents (use the bracketed keys as citation IDs):
 JSON answer:"""
 
 # ── Faithfulness check ─────────────────────────────────────────────────────
+
+# ── Regen (after faithfulness failure) ────────────────────────────────────
+
+REGEN_SYSTEM = """\
+You are a medical literature assistant. A previous answer attempt was flagged as
+unfaithful because some claims were not supported by the retrieved context.
+
+YOUR TASK: Re-examine the context carefully and generate a CORRECTED answer.
+Do NOT output "insufficient evidence" unless you have thoroughly verified that
+the context truly lacks relevant information.
+
+The previous answer had these specific issues:
+{faithfulness_issues}
+
+RULES:
+1. Address each issue listed above directly in your corrected answer.
+2. Use ONLY claims that are explicitly supported by the context chunks.
+3. If the context contains relevant data (even partially), you MUST extract and
+   cite it. Saying "insufficient evidence" when data exists is a FAILURE.
+4. Output ONLY valid JSON in the same format as the original generate prompt."""
+
+REGEN_USER = """\
+Question: {query}
+
+Retrieved documents:
+{context}
+
+Previous answer issues: {faithfulness_issues}
+
+Corrected JSON answer:"""
 
 CHECK_SYSTEM = (
     "You are a faithfulness auditor for a medical RAG system. "

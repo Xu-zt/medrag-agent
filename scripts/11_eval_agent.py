@@ -148,6 +148,7 @@ def _parse_score(text: str):
 def _build_initial_state(question: str) -> dict:
     return {
         "query": question,
+        "query_type": "synthesis",
         "rewritten_queries": [],
         "retrieved_chunks": [],
         "relevance_score": 0.0,
@@ -235,7 +236,7 @@ def main() -> None:
         # Build context from retrieved chunks for judge
         chunks = result.get("retrieved_chunks", [])
         context_text = "\n\n".join(
-            f"[{j+1}] {c.citation}: {c.text[:1000]}" for j, c in enumerate(chunks)
+            f"[{j+1}] {c.citation}: {c.text[:2000]}" for j, c in enumerate(chunks)
         ) if chunks else "(no chunks)"
 
         print(f"  agent: {agent_latency:.1f}s  iter={iterations}  regen={regen_count}"
@@ -249,7 +250,7 @@ def main() -> None:
         try:
             raw = _chat(client, args.model, FAITHFULNESS_SYS,
                         FAITHFULNESS_USR.format(
-                            context=context_text[:6000],
+                            context=context_text[:10000],
                             question=question,
                             answer=generated))
             faith_score, faith_issues = _parse_score(raw)

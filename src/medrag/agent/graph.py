@@ -47,6 +47,7 @@ from medrag.agent.nodes import (
     MAX_REGEN,
     MAX_REWRITES,
     GRADE_THRESHOLD,
+    _GRADE_THRESHOLDS,
     HISTORY_SUMMARIZE_EVERY,
     check_faithfulness,
     generate_answer_node,
@@ -78,14 +79,16 @@ logger.info("[graph] SqliteSaver at %s", _DB_PATH)
 
 def _after_grade(state: AgentState) -> str:
     """Route after grade_relevance:
-      - If score ≥ threshold → proceed to generate
+      - If score ≥ dynamic threshold → proceed to generate
       - If iterations < MAX_REWRITES → rewrite
       - Otherwise (cap hit) → generate anyway (best-effort)
     """
     score      = state.get("relevance_score", 0.0)
     iterations = state.get("iterations", 0)
+    query_type = state.get("query_type", "synthesis")
+    threshold  = _GRADE_THRESHOLDS.get(query_type, GRADE_THRESHOLD)
 
-    if score >= GRADE_THRESHOLD:
+    if score >= threshold:
         return "generate"
     if iterations < MAX_REWRITES:
         return "rewrite"

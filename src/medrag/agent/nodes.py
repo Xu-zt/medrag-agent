@@ -34,6 +34,8 @@ from medrag.agent.prompts import (
     GENERATE_USER,
     GRADE_SYSTEM,
     GRADE_USER,
+    REGEN_SYSTEM,
+    REGEN_USER,
     REWRITE_SYSTEM,
     REWRITE_USER,
     ROUTER_SYSTEM,
@@ -49,9 +51,16 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-MAX_REWRITES = 2          # up to 3 retrieval attempts total
+MAX_REWRITES = 1          # up to 2 retrieval attempts total (reduced from 2 to prevent query drift)
 MAX_REGEN    = 1          # up to 2 generation attempts total
-GRADE_THRESHOLD = 0.6     # relevance score below this triggers rewrite
+GRADE_THRESHOLD = 0.6     # relevance score below this triggers rewrite (base threshold)
+
+# Dynamic grade thresholds by query type (router output)
+_GRADE_THRESHOLDS = {
+    "factual":   0.5,  # simple factual queries rarely need rewrite
+    "synthesis": 0.6,  # standard threshold
+    "multihop":  0.7,  # more aggressive rewrite for multi-hop
+}
 HISTORY_SUMMARIZE_EVERY = 10  # L2 compression after this many turns
 CANDIDATE_K  = 20         # hybrid retrieval candidate pool
 TOP_K        = 5          # chunks passed to generator
@@ -72,9 +81,18 @@ def _get_retriever():
 
 @lru_cache(maxsize=1)
 def _get_reranker():
-    """Singleton BGEReranker — created once per process."""
+    """Singleton BGEReranker — created once per process. Prefers GPU if available."""
+    import os
     from medrag.retrieval.reranker import BGEReranker
-    return BGEReranker(device="cpu")
+    device = os.environ.get("RERANKER_DEVICE", "auto")
+    if device == "auto":
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            device = "cpu"
+    logger.info("[reranker] using device=%s", device)
+    return BGEReranker(device=device)
 
 
 # ── JSON parsing helper ────────────────────────────────────────────────────────
@@ -133,6 +151,7 @@ def route_query(state: AgentState) -> dict:
     # Initialise iteration counters if this is a fresh call
     return {
         "query": query,
+        "query_type": query_type,
         "iterations": state.get("iterations", 0),
         "regen_count": state.get("regen_count", 0),
     }
@@ -202,15 +221,21 @@ def grade_relevance(state: AgentState) -> dict:
     parsed = _parse_json(raw)
 
     score       = float(parsed.get("score", 0.0))
-    relevant    = bool(parsed.get("relevant", score >= GRADE_THRESHOLD))
     reason      = str(parsed.get("reason", ""))
     rewrite_hint = str(parsed.get("rewrite_hint", ""))
 
-    # If LLM says relevant=true but score is low, trust the boolean
-    if relevant and score < GRADE_THRESHOLD:
-        score = GRADE_THRESHOLD
+    # Dynamic threshold based on query type from router
+    query_type = state.get("query_type", "synthesis")
+    threshold = _GRADE_THRESHOLDS.get(query_type, GRADE_THRESHOLD)
 
-    logger.info("[grade] score=%.2f relevant=%s", score, relevant)
+    relevant = bool(parsed.get("relevant", score >= threshold))
+
+    # If LLM says relevant=true but score is low, trust the boolean
+    if relevant and score < threshold:
+        score = threshold
+
+    logger.info("[grade] score=%.2f relevant=%s threshold=%.1f type=%s",
+                score, relevant, threshold, query_type)
     return {
         "relevance_score": score,
         "grade_reason": reason,
@@ -274,10 +299,22 @@ def generate_answer_node(state: AgentState) -> dict:
     query  = state["query"]
     chunks = state.get("retrieved_chunks", [])
     context = _format_context(chunks) if chunks else "(no context available)"
+    regen_count = state.get("regen_count", 0)
+    faith_issues = state.get("faithfulness_issues", "")
+
+    # Use REGEN prompt if this is a re-generation attempt
+    if regen_count > 0 and faith_issues:
+        system_prompt = REGEN_SYSTEM.format(faithfulness_issues=faith_issues)
+        user_prompt = REGEN_USER.format(
+            query=query, context=context, faithfulness_issues=faith_issues)
+        logger.info("[generate] regen attempt #%d — using REGEN prompt", regen_count)
+    else:
+        system_prompt = GENERATE_SYSTEM
+        user_prompt = GENERATE_USER.format(query=query, context=context)
 
     resp = llm.invoke([
-        SystemMessage(content=GENERATE_SYSTEM),
-        HumanMessage(content=GENERATE_USER.format(query=query, context=context)),
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt),
     ])
     raw = strip_thinking(resp.content)
     parsed = _parse_json(raw)
@@ -405,5 +442,6 @@ __all__ = [
     "MAX_REWRITES",
     "MAX_REGEN",
     "GRADE_THRESHOLD",
+    "_GRADE_THRESHOLDS",
     "HISTORY_SUMMARIZE_EVERY",
 ]
