@@ -176,12 +176,18 @@ def main() -> None:
     )
     parser.add_argument("--sleep",  type=float, default=0.5)
     parser.add_argument("--output", default=str(OUTPUT_FILE))
+    parser.add_argument(
+        "--golden",
+        default=str(GOLDEN_FILE),
+        help="Path to golden dataset JSONL (default: golden_dataset.jsonl)",
+    )
     args = parser.parse_args()
 
-    if not GOLDEN_FILE.exists():
-        raise SystemExit(f"[error] {GOLDEN_FILE} not found.")
+    golden_path = Path(args.golden)
+    if not golden_path.exists():
+        raise SystemExit(f"[error] {golden_path} not found.")
 
-    golden = [json.loads(l) for l in GOLDEN_FILE.read_text(encoding="utf-8").splitlines()]
+    golden = [json.loads(l) for l in golden_path.read_text(encoding="utf-8").splitlines()]
     print(f"[eval] {len(golden)} questions | pipeline=P4-Agentic (LangGraph)", flush=True)
 
     # Resume: load already-evaluated IDs
