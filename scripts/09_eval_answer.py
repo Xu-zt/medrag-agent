@@ -86,11 +86,19 @@ Output ONLY valid JSON: {{"score": 0.0-1.0, "issues": "brief note or none"}}"""
 # ---------------------------------------------------------------------------
 
 def _make_client() -> OpenAI:
+    """Build judge client.  Prefers JUDGE_* vars over OPENAI_* to avoid
+    self-evaluation bias when the generator also uses the OpenAI-compat backend."""
     load_dotenv(ROOT / ".env")
-    api_key = os.environ.get("OPENAI_API_KEY")
+    judge_key = os.environ.get("JUDGE_API_KEY")
+    judge_url = os.environ.get("JUDGE_BASE_URL")
+    if judge_key and judge_url:
+        print("[judge] using independent judge API", flush=True)
+        return OpenAI(api_key=judge_key, base_url=judge_url)
+    api_key  = os.environ.get("OPENAI_API_KEY")
     base_url = os.environ.get("OPENAI_BASE_URL")
     if not api_key or not base_url:
-        raise SystemExit("[error] OPENAI_API_KEY or OPENAI_BASE_URL missing in .env")
+        raise SystemExit("[error] Set JUDGE_API_KEY+JUDGE_BASE_URL or OPENAI_API_KEY+OPENAI_BASE_URL in .env")
+    print("[judge] WARNING: JUDGE_API_KEY not set — generator and judge share the same backend.", flush=True)
     return OpenAI(api_key=api_key, base_url=base_url)
 
 

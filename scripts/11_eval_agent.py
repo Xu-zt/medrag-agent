@@ -80,11 +80,32 @@ Output ONLY valid JSON: {{"score": 0.0-1.0, "issues": "brief note or none"}}"""
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_client() -> OpenAI:
+    """Build the judge OpenAI client.
+
+    Priority:
+      1. JUDGE_API_KEY + JUDGE_BASE_URL   — independent third-party judge
+      2. OPENAI_API_KEY + OPENAI_BASE_URL — fallback (same as generator; warns about bias)
+    """
     load_dotenv(ROOT / ".env")
+
+    judge_key  = os.environ.get("JUDGE_API_KEY")
+    judge_url  = os.environ.get("JUDGE_BASE_URL")
+
+    if judge_key and judge_url:
+        print("[judge] using independent judge API (JUDGE_API_KEY / JUDGE_BASE_URL)", flush=True)
+        return OpenAI(api_key=judge_key, base_url=judge_url)
+
+    # Fallback — warn about self-evaluation bias
     api_key  = os.environ.get("OPENAI_API_KEY")
     base_url = os.environ.get("OPENAI_BASE_URL")
     if not api_key or not base_url:
-        raise SystemExit("[error] OPENAI_API_KEY or OPENAI_BASE_URL missing in .env")
+        raise SystemExit("[error] Set JUDGE_API_KEY+JUDGE_BASE_URL or OPENAI_API_KEY+OPENAI_BASE_URL in .env")
+    print(
+        "[judge] WARNING: JUDGE_API_KEY not set — falling back to OPENAI_API_KEY.\n"
+        "        Generator and judge share the same backend; scores may be inflated.\n"
+        "        Set JUDGE_BASE_URL + JUDGE_API_KEY + JUDGE_MODEL for an independent judge.",
+        flush=True,
+    )
     return OpenAI(api_key=api_key, base_url=base_url)
 
 
@@ -148,7 +169,11 @@ def _build_initial_state(question: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model",  default="mimo-v2.5-pro")
+    parser.add_argument(
+        "--model",
+        default=os.environ.get("JUDGE_MODEL") or os.environ.get("OPENAI_MODEL", "mimo-v2.5-pro"),
+        help="Judge model name (default: JUDGE_MODEL env or mimo-v2.5-pro)",
+    )
     parser.add_argument("--sleep",  type=float, default=0.5)
     parser.add_argument("--output", default=str(OUTPUT_FILE))
     args = parser.parse_args()

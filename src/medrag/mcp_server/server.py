@@ -53,6 +53,47 @@ from medrag.mcp_server.security import (
 logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+
+# ── Token usage accumulator (LangChain callback) ───────────────────────────────
+
+class _UsageAccumulator:
+    """Lightweight LangChain callback that sums prompt/completion tokens.
+
+    Works with both ChatOpenAI (OpenAI-compatible) and ChatOllama responses.
+    Pass an instance via config["callbacks"] when calling app.invoke().
+    """
+
+    def __init__(self) -> None:
+        self.prompt_tokens:     int = 0
+        self.completion_tokens: int = 0
+
+    # LangChain v0.1+ interface
+    def on_llm_end(self, response, **kwargs) -> None:  # type: ignore[override]
+        try:
+            for gen_list in response.generations:
+                for gen in gen_list:
+                    # ChatOpenAI stores usage in generation_info
+                    info = getattr(gen, "generation_info", {}) or {}
+                    usage = info.get("usage", {}) or {}
+                    self.prompt_tokens     += usage.get("prompt_tokens", 0)
+                    self.completion_tokens += usage.get("completion_tokens", 0)
+            # Also try llm_output (older format)
+            llm_out = getattr(response, "llm_output", {}) or {}
+            token_usage = llm_out.get("token_usage", {}) or {}
+            if token_usage:
+                self.prompt_tokens     += token_usage.get("prompt_tokens", 0)
+                self.completion_tokens += token_usage.get("completion_tokens", 0)
+        except Exception:
+            pass  # never let logging break the pipeline
+
+    # Required stub so LangChain doesn't complain
+    def on_llm_start(self, *args, **kwargs) -> None:  # noqa: D401
+        pass
+
+    def on_llm_error(self, *args, **kwargs) -> None:
+        pass
+
+
 # ── Lazy singletons ────────────────────────────────────────────────────────────
 
 _retriever = None
@@ -218,7 +259,9 @@ def ask_agent(
             "summary": "",
         }
 
-        result = app.invoke(initial_state, config=config)
+        usage = _UsageAccumulator()
+        config_with_cb = {**config, "callbacks": [usage]}
+        result = app.invoke(initial_state, config=config_with_cb)
 
         # Update history with the answer
         if result.get("answer"):
@@ -242,8 +285,14 @@ def ask_agent(
         status = f"error:{type(exc).__name__}"
         raise
     finally:
-        log_tool_call("ask_agent", query, status,
-                      (time.perf_counter() - t0) * 1000)
+        pt = usage.prompt_tokens     if "usage" in dir() else None
+        ct = usage.completion_tokens if "usage" in dir() else None
+        log_tool_call(
+            "ask_agent", query, status,
+            (time.perf_counter() - t0) * 1000,
+            prompt_tokens=pt or None,
+            completion_tokens=ct or None,
+        )
 
 
 @mcp.tool()

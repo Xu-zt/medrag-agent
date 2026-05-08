@@ -1,7 +1,8 @@
 """Audit logging middleware for MedRAG-Agent MCP server.
 
 Writes structured JSON-Lines to data/logs/audit.jsonl.
-Each entry records: timestamp, tool, query_hash, user_agent, latency_ms, status.
+Each entry records: timestamp, tool, query_hash, latency_ms, status,
+and (when available) prompt_tokens / completion_tokens for cost tracking.
 
 PII-safe: the query itself is NOT logged; only a SHA-256 prefix is stored.
 """
@@ -42,9 +43,21 @@ def log_tool_call(
     query: str,
     status: str,
     latency_ms: float,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
     extra: dict | None = None,
 ) -> None:
-    """Write a single audit record synchronously."""
+    """Write a single audit record synchronously.
+
+    Args:
+        tool_name:         MCP tool that was called.
+        query:             Raw query (hashed before logging).
+        status:            "ok" or "error:<ExcType>" or "rejected:<ExcType>".
+        latency_ms:        Wall-clock time for the tool call.
+        prompt_tokens:     Total prompt tokens consumed (all LLM calls combined).
+        completion_tokens: Total completion tokens generated.
+        extra:             Any additional key/value pairs to merge into the record.
+    """
     entry: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "tool": tool_name,
@@ -52,6 +65,10 @@ def log_tool_call(
         "status": status,
         "latency_ms": round(latency_ms, 1),
     }
+    if prompt_tokens is not None:
+        entry["prompt_tokens"] = prompt_tokens
+    if completion_tokens is not None:
+        entry["completion_tokens"] = completion_tokens
     if extra:
         entry.update(extra)
     _write_entry(entry)
