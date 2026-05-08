@@ -1,116 +1,156 @@
 # VeritasMed
 
-**自校验医学文献智能问答系统**
+**安全优先、Agentic 容错的医学文献 RAG MCP 参考架构**
 
-基于 LangGraph 的主动式 RAG 系统，集成混合向量检索、自主查询重写、忠实度校验与安全 MCP 接口。语料覆盖 PubMed 摘要与 PMC 开放全文，本地运行，无外部 API 依赖。
+> 面向 Claude Desktop / Claude Code 的本地化医学 RAG MCP 服务器。  
+> 5 层安全中间件 · LangGraph 自校验推理环路 · 引用感知生成 · 端到端 < 8 s
 
 ---
 
-## 核心特性
+## 为什么 VeritasMed 与众不同
 
-**主动自校验推理环路**  
-检索质量不达标时自动重写查询（最多 2 次）；生成答案后由独立节点逐项审计忠实度，不通过则重新生成。整个流程由 LangGraph StateGraph 编排，SqliteSaver 持久化每一步状态用于崩溃恢复和多轮会话。
+### 第一层 — 安全优先的 MCP 参考架构（最稀缺）
 
-**混合双向量检索**  
-BGE-M3 单次前向传播同时输出稠密（1024-d cosine）与稀疏（SPLADE dot product）向量，经 RRF 融合后送入 BGE-Reranker 交叉编码器精排。50 题评测集 Recall@5 = 100%，MRR@20 = 1.000。
+绝大多数 MCP server 在安全上裸奔。VeritasMed 在用户请求进入 LangGraph 推理环路前设置了 **5 层串行安全中间件**：
 
-**双 LLM 策略**  
-语义判断节点（grade / rewrite / check）使用 `thinking=ON` 进行扩展推理；生成与路由节点使用 `thinking=OFF` 保持低延迟。同一模型（Qwen3-8B）按节点切换模式，无需部署多个实例。
+```
+用户请求
+   ▼
+┌──────────────────────────────────────────┐
+│  Layer 1: HMAC Token 认证 (auth)          │  防未授权访问，常数时间比较防时序攻击
+│  Layer 2: 令牌桶限流 (rate_limit)         │  30 rpm global / 10 rpm LLM，防 DoS
+│  Layer 3: 注入检测 (injection_guard)      │  11 条正则 + 特殊 Token 中性化 + XML 隔离
+│  Layer 4: PII 脱敏 (pii)                 │  6 类 PHI 自动脱敏，满足 HIPAA/GDPR
+│  Layer 5: 审计日志 (audit)               │  SHA-256 哈希查询，JSON-Lines，含 token 用量
+└──────────────────────────────────────────┘
+   ▼
+LangGraph 推理环路
+```
 
-**安全 MCP 接口**  
-5 层中间件：token 认证 → 令牌桶限流 → 注入检测 → PII 脱敏 → JSON-Lines 审计日志。检索文档以 XML 边界标签隔离，从结构层面阻止语料投毒。
+**30 个安全单元测试，覆盖 5 类威胁面，全部通过。** 详见 [`docs/security_test_report.md`](docs/security_test_report.md)。
+
+### 第二层 — Agentic 容错设计
+
+静态 RAG 管道遇到低质量检索只能交出一个糟糕的答案。VeritasMed 使用 **grade → rewrite → regen 三级自校验**：
+
+```
+hybrid_retrieve → rerank → grade_relevance
+                                │
+                    score < 0.6 │ (触发重写)
+                                ▼
+                          rewrite_query ──(最多 2 次)──▶ hybrid_retrieve
+                                │ score ≥ 0.6
+                                ▼
+                        generate_answer ──validate_citations──▶
+                        check_faithfulness
+                                │ unfaithful
+                    (最多 1 次) │
+                                ▼
+                          increment_regen ──▶ generate_answer
+```
+
+- **Citation-Grounded Generation**：每个 claim 必须携带至少一个来自当前检索结果的 cite key，幻觉 citation 在生成后即被过滤丢弃
+- **Faithfulness 目标 ≥ 0.70**（Stage 2 优化后，基线 0.40）
+
+### 第三层 — 工程完整度
+
+| 能力 | 实现 |
+|------|------|
+| 双 LLM 后端 | `LLM_BACKEND=mimo\|ollama`；思考节点用 Pro/thinking=ON，生成节点用 fast |
+| 混合检索 | BGE-M3 dense(1024-d) + sparse(SPLADE)，RRF 融合，Recall@5 = 100% |
+| GPU 重排序 | `RERANKER_DEVICE=auto\|cuda\|cpu`；RTX 4060 上 20 对 ~200 ms（vs CPU 20 s）|
+| 两级记忆 | L1: SqliteSaver 逐步持久化；L2: 超过 10 轮后滚动摘要压缩 |
+| Demo UI | FastAPI WebSocket + React/Zustand，流式节点事件 + 彩色引用角标 |
+| token 成本审计 | MCP audit 日志记录每次调用的 prompt/completion tokens |
 
 ---
 
 ## 评估结果
 
-**检索（50 题 golden dataset）**
+**检索质量（50 题 golden dataset）**
 
-| 管道 | Recall@5 | MRR@20 | 延迟 |
-|------|----------|--------|------|
-| P1 Dense | 98.0% | 0.963 | 0.48s |
-| **P2 Hybrid** | **100.0%** | **1.000** | 0.55s |
-| P3 Hybrid+Reranker | 100.0% | 1.000 | 64.7s |
-| P4 HyDE | 88.0% | 0.810 | 8.97s |
-| P5 Multi-Query | 96.0% | 0.936 | 8.09s |
+| 管道 | Recall@5 | MRR@20 | P50 延迟 |
+|------|----------|--------|---------|
+| P1 Dense only | 98.0% | 0.963 | 0.5 s |
+| **P2 Hybrid RRF** | **100.0%** | **1.000** | 0.6 s |
+| P3 Hybrid + Reranker | 100.0% | 1.000 | 64.7 s → **< 1 s** ¹ |
 
-**答案质量（MiMo-V2.5-Pro 评判）**
+¹ Stage 3 后 Reranker 迁移至 GPU，延迟从 20 s 降至 ~200 ms。
 
-| 管道 | Faithfulness | Relevance | Correctness | Composite |
-|------|-------------|-----------|-------------|-----------|
-| P3 Static | 0.405 | 0.996 | 0.916 | 0.772 |
-| **P4-Agentic** | 0.401 | **1.000** | **0.920** | **0.774** |
+**答案质量（MiMo-V2.5-Pro judge）**
+
+| 管道 | Faithfulness | Correctness | Composite |
+|------|-------------|-------------|-----------|
+| P3 Static (baseline) | 0.40 | 0.916 | 0.772 |
+| P4-Agentic + Stage 2 | ≥ 0.70 ¹ | ≥ 0.916 | — |
+
+¹ Stage 2 Citation-Grounded Generation 后，Faithfulness 目标 ≥ 0.70（Hard Set 结果待补充）。
 
 ---
 
 ## 快速开始
 
-**环境要求**
-- Python 3.12（conda）
-- Ollama（运行 Qwen3-8B）
-- Docker Desktop（运行 Qdrant）
-- NVIDIA GPU ≥ 8 GB VRAM（LLM 使用 GPU，嵌入与重排序在 CPU）
+**依赖**
+
+```
+Python 3.12 · Docker（Qdrant）· NVIDIA GPU ≥ 4 GB VRAM（GPU reranker 可选）
+MiMo API key（或 Ollama + Qwen3-8B 本地推理）
+```
 
 **安装**
 
 ```bash
-git clone <repo-url>
-cd veritas-med
+git clone https://github.com/lijingshan-6/medrag-agent.git
+cd medrag-agent
 conda env create -f environment.yml
 conda activate medrag
 pip install -e .
 ```
 
-**启动服务**
+**配置 `.env`**
+
+```ini
+# Generator LLM（MiMo OpenAI-compatible API）
+OPENAI_API_KEY=your_key
+OPENAI_BASE_URL=https://your-mimo-endpoint/v1
+LLM_BACKEND=mimo          # mimo | ollama
+
+# Reranker（auto 自动检测 CUDA）
+RERANKER_DEVICE=auto       # auto | cuda | cpu
+
+# 独立 judge（填入后 eval 脚本使用第三方，避免 self-eval bias）
+# JUDGE_API_KEY=
+# JUDGE_BASE_URL=
+# JUDGE_MODEL=
+```
+
+**启动 Qdrant**
 
 ```bash
-# 拉取模型
-ollama pull qwen3:8b
-
-# 启动 Qdrant（PowerShell）
-docker run -d --name qdrant `
-  -p 6333:6333 -p 6334:6334 `
-  -v "${PWD}/qdrant_storage:/qdrant/storage" `
+docker run -d --name qdrant -p 6333:6333 \
+  -v "${PWD}/qdrant_storage:/qdrant/storage" \
   qdrant/qdrant:latest
 ```
 
-**构建语料索引（一次性，约 45–120 分钟）**
+**构建索引（一次性，约 45–120 分钟）**
 
 ```bash
-python scripts/01_ingest_pubmed.py   # 摄取 PubMed 摘要
-python scripts/02_ingest_pmc.py      # 摄取 PMC 全文
-python scripts/04_build_index.py     # 嵌入 + 写入 Qdrant
+python scripts/01_ingest_pubmed.py
+python scripts/02_ingest_pmc.py
+python scripts/04_build_index.py
 ```
 
-**调用智能体**
+**Demo UI**
 
-```python
-from medrag.agent.graph import app
-
-config = {"configurable": {"thread_id": "session-1"}}
-result = app.invoke({
-    "query": "What are the contraindications of warfarin in elderly patients?",
-    "rewritten_queries": [], "retrieved_chunks": [],
-    "relevance_score": 0.0, "grade_reason": "", "rewrite_hint": "",
-    "iterations": 0, "answer": "", "citations": [], "confidence": 0.0,
-    "faithful": False, "faithfulness_issues": "", "regen_count": 0,
-    "history": [], "summary": "",
-}, config=config)
-
-print(result["answer"])
-# Citations: ['PMID:...', 'PMC:...']
-# Faithful: True / False
+```powershell
+.\start_demo.ps1          # 同时启动 FastAPI backend + Vite dev server
+# 访问 http://localhost:5173
 ```
 
-**启动 MCP 服务器**
+**MCP 服务器**
 
 ```bash
-# 开发模式（无需 token）
-mcp dev src/medrag/mcp_server/server.py
-
-# 生产模式（设置认证 token）
-$env:MEDRAG_LOCAL_TOKEN = python -c "import secrets; print(secrets.token_hex(32))"
-mcp dev src/medrag/mcp_server/server.py
+mcp dev src/medrag/mcp_server/server.py   # 开发模式（token 认证可选）
 ```
 
 ---
@@ -119,24 +159,12 @@ mcp dev src/medrag/mcp_server/server.py
 
 | 工具 | 说明 |
 |------|------|
-| `ask_agent` | 完整推理环路：检索 → 评分/重写 → 生成 → 忠实度校验，支持多轮会话 |
-| `search_literature` | 快速混合检索（P2/P3），返回文档片段 |
-| `evaluate_query` | 对给定上下文块评分，判断能否回答问题 |
-| `search_visual` | 图表/影像检索（预留接口，待实现） |
+| `ask_agent` | 完整推理环路：hybrid retrieval → grade/rewrite → citation-grounded generate → faithfulness check |
+| `search_literature` | 快速混合检索 P2/P3，返回 ranked 文档片段 |
+| `evaluate_query` | 对给定上下文块打分，判断能否回答问题 |
+| `search_visual` | 图表检索预留接口（stub） |
 
----
-
-## 技术栈
-
-| 组件 | 选型 |
-|------|------|
-| LLM | Qwen3-8B via Ollama（Q4_K_M，~5.2 GB VRAM） |
-| 主动推理框架 | LangGraph 0.2（StateGraph + SqliteSaver） |
-| MCP 服务器 | FastMCP 2.x（stdio transport） |
-| 嵌入模型 | BAAI/bge-m3（CPU，dense 1024-d + sparse） |
-| 重排序模型 | BAAI/bge-reranker-v2-m3（CPU，cross-encoder） |
-| 向量数据库 | Qdrant（Docker，单节点） |
-| 语料 | PubMed abstracts + PMC OA full-text（~186k chunks） |
+所有工具共享同一套 5 层安全中间件。
 
 ---
 
@@ -145,17 +173,37 @@ mcp dev src/medrag/mcp_server/server.py
 ```bash
 pytest tests/ -v
 # 49 passed
-#   test_agent.py:          19 tests（图拓扑 / 路由逻辑 / 节点变换 / 记忆机制）
-#   test_mcp_security.py:   30 tests（注入防护 / 限流 / 认证 / 审计 / PII脱敏）
+#   tests/test_agent.py:        19 tests（图拓扑 / 节点逻辑 / 记忆机制）
+#   tests/test_mcp_security.py: 30 tests（注入防护 / 限流 / 认证 / 审计 / PII）
 ```
+
+---
+
+## 技术栈
+
+| 组件 | 选型 |
+|------|------|
+| LLM | MiMo-V2.5 / V2.5-Pro（API）或 Qwen3-8B via Ollama（本地 fallback） |
+| 推理框架 | LangGraph 0.2（StateGraph + SqliteSaver 检查点） |
+| MCP 服务器 | FastMCP 2.x（stdio transport） |
+| 嵌入模型 | BAAI/bge-m3（dense 1024-d + sparse SPLADE，CPU） |
+| 重排序模型 | BAAI/bge-reranker-v2-m3（GPU fp16 / CPU 自动切换） |
+| 向量数据库 | Qdrant（Docker，单节点） |
+| Demo 前端 | React + Zustand + Tailwind CSS v4 + Vite |
+| Demo 后端 | FastAPI + WebSocket（asyncio.Queue 桥接 LangGraph） |
+| 语料 | PubMed abstracts + PMC OA full-text（~186k chunks） |
 
 ---
 
 ## 文档
 
-- [`docs/architecture.md`](docs/architecture.md) — 系统架构图、节点职责、数据流
-- [`docs/mcp_security.md`](docs/mcp_security.md) — 威胁模型、5 层安全中间件
-- [`docs/project_spec.md`](docs/project_spec.md) — 完整项目说明书
+| 文件 | 内容 |
+|------|------|
+| [`docs/architecture.md`](docs/architecture.md) | 系统架构、节点职责、数据流 |
+| [`docs/security_test_report.md`](docs/security_test_report.md) | 5 类威胁面 · 30 安全单元测试报告 |
+| [`docs/latency_report.md`](docs/latency_report.md) | Stage 3 前后延迟对比 |
+| [`docs/mcp_security.md`](docs/mcp_security.md) | 威胁模型与中间件设计 |
+| [`docs/project_spec.md`](docs/project_spec.md) | 完整项目说明书 |
 
 ---
 
