@@ -98,6 +98,25 @@ def _get_reranker():
 
 # ── JSON parsing helper ────────────────────────────────────────────────────────
 
+def _invoke_with_retry(llm, messages, retries: int = 1) -> str:
+    """Invoke LLM and retry once if response is empty (transient API issue)."""
+    import time
+    for attempt in range(1 + retries):
+        resp = llm.invoke(messages)
+        content = resp.content or ""
+        raw = strip_thinking(content)
+        if raw and raw.strip():
+            return raw
+        # If strip_thinking removed everything but original had content, use original
+        if content and content.strip():
+            logger.warning("[llm] strip_thinking returned empty but raw has %d chars — using raw", len(content))
+            return content.strip()
+        if attempt < retries:
+            logger.warning("[llm] empty response — retrying (attempt %d/%d)", attempt + 1, retries)
+            time.sleep(2)
+    return raw  # return empty on final attempt
+
+
 def _parse_json(text: str) -> dict[str, Any]:
     """Strip markdown fences and parse JSON; return {} on failure."""
     text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
@@ -139,11 +158,10 @@ def route_query(state: AgentState) -> dict:
     llm = make_llm_fast()
     query = state["query"]
 
-    resp = llm.invoke([
+    raw = _invoke_with_retry(llm, [
         SystemMessage(content=ROUTER_SYSTEM),
         HumanMessage(content=ROUTER_USER.format(query=query)),
     ])
-    raw = strip_thinking(resp.content)
     parsed = _parse_json(raw)
 
     query_type = parsed.get("type", "factual")
@@ -214,11 +232,10 @@ def grade_relevance(state: AgentState) -> dict:
     chunks = state.get("retrieved_chunks", [])
     context = _format_context(chunks) if chunks else "(no chunks retrieved)"
 
-    resp = llm.invoke([
+    raw = _invoke_with_retry(llm, [
         SystemMessage(content=GRADE_SYSTEM),
         HumanMessage(content=GRADE_USER.format(query=query, context=context)),
     ])
-    raw = strip_thinking(resp.content)
     parsed = _parse_json(raw)
 
     score       = float(parsed.get("score", 0.0))
@@ -258,7 +275,7 @@ def rewrite_query(state: AgentState) -> dict:
     reason = state.get("grade_reason", "")
     hint   = state.get("rewrite_hint", "")
 
-    resp = llm.invoke([
+    raw = _invoke_with_retry(llm, [
         SystemMessage(content=REWRITE_SYSTEM),
         HumanMessage(content=REWRITE_USER.format(
             query=original_query,
@@ -267,7 +284,7 @@ def rewrite_query(state: AgentState) -> dict:
             hint=hint,
         )),
     ])
-    new_query = strip_thinking(resp.content).strip().strip('"').strip("'")
+    new_query = raw.strip().strip('"').strip("'")
 
     iterations = state.get("iterations", 0) + 1
     logger.info("[rewrite] iter=%d  new_query=%s", iterations, new_query[:80])
@@ -313,11 +330,14 @@ def generate_answer_node(state: AgentState) -> dict:
         system_prompt = GENERATE_SYSTEM
         user_prompt = GENERATE_USER.format(query=query, context=context)
 
-    resp = llm.invoke([
+    raw = _invoke_with_retry(llm, [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt),
     ])
-    raw = strip_thinking(resp.content)
+    if not raw.strip():
+        logger.warning("[generate] LLM returned completely empty response after retry")
+    else:
+        logger.debug("[generate] raw response (%d chars): %s", len(raw), raw[:300])
     parsed = _parse_json(raw)
 
     # ── Citation-grounded validation ──────────────────────────────────────
@@ -365,11 +385,10 @@ def check_faithfulness(state: AgentState) -> dict:
     answer = state.get("answer", "")
     context = _format_context(chunks) if chunks else "(no context)"
 
-    resp = llm.invoke([
+    raw = _invoke_with_retry(llm, [
         SystemMessage(content=CHECK_SYSTEM),
         HumanMessage(content=CHECK_USER.format(context=context, answer=answer)),
     ])
-    raw = strip_thinking(resp.content)
     parsed = _parse_json(raw)
 
     faithful = bool(parsed.get("faithful", False))
@@ -418,14 +437,14 @@ def summarize_history(state: AgentState) -> dict:
     )
 
     llm = make_llm_fast()
-    resp = llm.invoke([
+    raw = _invoke_with_retry(llm, [
         SystemMessage(content=SUMMARIZE_SYSTEM),
         HumanMessage(content=SUMMARIZE_USER.format(
             previous_summary=summary or "(none)",
             turns=turns_text,
         )),
     ])
-    new_summary = strip_thinking(resp.content).strip()
+    new_summary = raw.strip()
     logger.info("[summarize] updated summary (%d chars)", len(new_summary))
     return {"summary": new_summary}
 

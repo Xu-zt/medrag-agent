@@ -1,6 +1,6 @@
 # VeritasMed 评估报告
 
-> 版本: v1.1 · 日期: 2026-05-09  
+> 版本: v1.2 · 日期: 2026-05-09  
 > 评测对象: MedRAG-Agent (P3 Static → P4-Agentic → Stage 2 Smart Routing)  
 > 语料: 44,768 chunks (1,975 PubMed + 42,793 PMC)
 
@@ -9,6 +9,7 @@
 ## 1. 实验设置
 
 ### 1.1 管道定义
+
 
 | 管道 | 检索 | 重排 | 生成 | 特点 |
 |------|------|------|------|------|
@@ -97,19 +98,21 @@ Hard Set 按困难类型分类：
 - P4 触发 rewrite 比例 = 0%，Agent 循环完全未激活
 - Stage 2 反而略差（−0.023），且延迟暴涨至 274s（被 P90=555s 的 outlier 拉高）
 
-### 3.2 Hard Set (39 题): P3 vs P4-Agentic
+### 3.2 Hard Set (39 题): P3 vs P4-Agentic (v1) vs P4-Agentic (v4)
 
 | 管道 | Faithfulness | Relevance | Correctness | **Composite** | P50 Latency |
 |------|-------------|-----------|-------------|---------------|-------------|
 | **P3 Static** | 0.7718 | 0.8897 | 0.5821 | **0.7479** | 44.0s |
-| **P4-Agentic** | 0.7564 | 0.6987 | 0.6000 | **0.6850** | 116.8s |
-| **Δ** | −0.015 | **−0.191** | +0.018 | **−0.063** | +72.8s |
+| **P4 v1 (原版)** | 0.7564 | 0.6987 | 0.6000 | **0.6850** | 116.8s |
+| **P4 v4 (smart gate)** | 0.9513 | 0.8192 | 0.6833 | **0.8179** | — |
+| **Δ (v4 vs P3)** | **+0.179** | −0.071 | **+0.101** | **+0.070** | — |
 
 **观察**：
-- P4 整体比 P3 差 0.063 composite
-- Relevance 大幅下滑 −0.191 是主因
-- Correctness 小幅提升 +0.018，说明 rewrite 在部分题目上有效
-- P4 延迟是 P3 的 2.7×
+- P4 v4 Composite 0.818 超越 P3 基线 0.748，增益 +0.070
+- Faithfulness 从 v1 的 0.756 提升至 0.951（+0.195），是最大改善维度
+- Correctness 0.683 也超越 P3 的 0.582（+0.101）
+- Relevance 0.819 略低于 P3 的 0.890（−0.071），但远优于 v1 的 0.699
+- Insufficient evidence 从 v1 的 8/39 降至 1/39
 
 ### 3.3 图表: 标准集按专科分布
 
@@ -136,18 +139,17 @@ Infectious    (n=2)  ███████████████████�
 ### 3.4 图表: Hard Set 按题型分布
 
 ```
-Hard Set Composite — P3 vs P4
-                P3        P4        Δ
-A — 多跳(n=4)  ██████    ████     −0.108   0.533 → 0.425
-B — 术语(n=10) █████████ ███████  −0.148   0.732 → 0.583
-C — 否定(n=10) ██████████ ████████ −0.128   0.807 → 0.678
-D — 跨域(n=15) █████████ █████████ +0.050   0.777 → 0.827  ✓
+Hard Set Composite — P3 vs P4-v1 vs P4-v4
+                P3        P4-v1     P4-v4
+A — 多跳(n=4)  ██████    ████      █████    0.533 → 0.425 → 0.546
+B — 术语(n=10) █████████ ███████   ██████████ 0.732 → 0.583 → 0.873  ✓✓
+C — 否定(n=10) ██████████ ████████ █████████  0.807 → 0.678 → 0.773
+D — 跨域(n=15) █████████ █████████ ██████████ 0.777 → 0.827 → 0.883  ✓
 
-Agent 循环统计 (P4 Hard Set):
-  触发 rewrite:  23.1%  (9/39)
-  平均 rewrites/题: 0.46
-  平均 regen/题:   0.36
-  Agent faithful%: 76.9%
+v4 Agent 循环统计:
+  Smart gate 触发: 4/39  (跳过 regen，保护正确答案)
+  Regen 实际执行:  2/39
+  Insufficient evidence: 1/39  (v1: 8/39)
 ```
 
 ### 3.5 图表: 延迟分布
@@ -474,23 +476,56 @@ faithfulness checker 的 false positive + REGEN 的 "insufficient evidence" 倾�
 - 3 cases 从 insufficient → answer (改善)
 - 净效果为负：禁用 regen 丢失了 3 个 regen 正确修复的 cases (A04, B08, D14)
 
-### 8.4 v4 实验 (智能 regen，MAX_REGEN=1 + smart gate)
+### 8.4 v4 实验 (智能 regen + 全量优化)
 
 **设计**：保留 regen 但增加智能门控——如果 first-gen answer 已有 citations 且 confidence ≥ 0.3，
 即使 faithfulness check 报告 unfaithful，也跳过 regen（防止 false positive 覆盖好答案）。
 
-**代码变更**：
-- `nodes.py`: MAX_REGEN=1, REGEN_CONFIDENCE_SKIP=0.3
-- `graph.py`: _after_check() 增加 smart gate 逻辑
+**额外优化**（Phase 1+2 之外）：
+- `mimo-v2.5-pro` 用于所有节点（`MIMO_MODEL_FAST=mimo-v2.5-pro`），因 mimo-v2.5 持续返回空响应
+- `max_tokens` 从 2048 提升至 4096，防止长 JSON 响应被截断
+- `_invoke_with_retry()` 空响应重试机制（1 次重试 + 2s 等待）
 
-**状态**：⏳ 待评测 (MiMo API 当前返回空响应，需等待服务恢复)
+**代码变更**：
+- `nodes.py`: MAX_REGEN=1, REGEN_CONFIDENCE_SKIP=0.3, `_invoke_with_retry()`
+- `graph.py`: `_after_check()` 增加 smart gate 逻辑
+- `llms.py`: max_tokens 2048→4096
+- `.env`: MIMO_MODEL_FAST=mimo-v2.5-pro
+
+**结果**：✅ **composite 0.818 — 超越 P3 基线 (0.748) 达 +0.070**
+
+| 指标 | v1 (原版) | v3 (无regen) | **v4 (smart gate)** | P3 基线 | v4 vs v1 | v4 vs P3 |
+|------|-----------|-------------|---------------------|---------|----------|----------|
+| **Composite** | 0.685 | 0.638 | **0.818** | 0.748 | **+0.133** | **+0.070** |
+| Faithfulness | 0.756 | 0.792 | **0.951** | 0.772 | +0.195 | +0.179 |
+| Relevance | 0.699 | 0.633 | **0.819** | 0.890 | +0.120 | −0.071 |
+| Correctness | 0.600 | 0.487 | **0.683** | 0.582 | +0.083 | +0.101 |
+| Insufficient evidence | 8/39 | 12/39 | **1/39** | — | −7 | — |
+
+**按困难类型分布**：
+
+| 类型 | v1 P4 | v4 | Δ | P3 基线 | v4 vs P3 |
+|------|-------|-----|---|---------|----------|
+| A — 多跳 (n=4) | 0.425 | 0.546 | +0.121 | 0.533 | +0.013 |
+| B — 术语 (n=10) | 0.583 | **0.873** | **+0.290** | 0.732 | **+0.141** |
+| C — 否定 (n=10) | 0.678 | 0.773 | +0.095 | 0.807 | −0.034 |
+| D — 跨域 (n=15) | 0.827 | **0.883** | +0.056 | 0.777 | **+0.106** |
+
+**Smart gate 效果**：
+- Smart gate 触发 4 次（跳过 regen），保护了 4 个原本会被 "insufficient evidence" 覆盖的正确答案
+- 仅 2 次 regen 被实际执行
+- Insufficient evidence 从 v1 的 8/39 降至 1/39
+
+**零分案例**：仅 1 个 (hard_C05)，为否定/反事实题，首次 generate 即输出 "insufficient evidence"
 
 ### 8.5 关键发现
 
-1. **Faithfulness checker 不可靠**：对 nuanced medical answers 有高 false positive rate
-2. **REGEN 的 "insufficient evidence" 陷阱**：REGEN prompt 过于保守，倾向于放弃而非修正
-3. **LLM 非确定性**：4/7 v3 回归 cases 是因为 LLM 生成了不同输出（相同输入）
-4. **Smart gate 是正确方向**：用 confidence + citations 作为 regen 触发条件比 faithfulness check 更可靠
+1. **Smart gate 是核心优化**：用 confidence + citations 作为 regen 门控比 faithfulness check 更可靠，解决了 v2/v3 的 "insufficient evidence" 陷阱
+2. **mimo-v2.5-pro 统一模型显著提升**：mimo-v2.5 持续返回空响应，切换至 pro 后所有节点稳定性大幅提升
+3. **max_tokens=4096 防止截断**：长 JSON 响应不再被截断，_parse_json 失败率降至 0
+4. **_invoke_with_retry 空响应保护**：API 偶发空响应被自动重试，消除了随机失败
+5. **Faithfulness 从 0.756 提升至 0.951**：说明 v1 的低 faithfulness 主要源于生成质量问题（空响应/截断），而非 judge 偏差
+6. **B 类 (术语歧义) 改善最大 (+0.290)**：pro 模型的理解力 + smart gate 保护 = 最佳组合
 
 ---
 
@@ -528,9 +563,9 @@ python scripts/11_eval_agent.py \
 | `data/eval/p3_hard_eval.json` | P3 Hard Set 评测结果 |
 | `data/eval/agent_eval_hard.json` | P4 Hard Set 评测结果 |
 | `data/eval/agent_eval_hard_v1.json` | P4 Hard Set v1 (优化前基线) |
-| `data/eval/agent_eval_hard_v4.json` | P4 Hard Set v4 (智能 regen，待完成) |
+| `data/eval/agent_eval_hard_v4.json` | P4 Hard Set v4 (智能 regen，composite=0.818) |
 | `docs/hard_set_report.md` | Hard Set 专项报告 |
 
 ---
 
-*VeritasMed Evaluation Report v1.0 — 2026-05-08*
+*VeritasMed Evaluation Report v1.1 — 2026-05-09*

@@ -84,7 +84,7 @@ def make_llm_fast():
         base_url=_mimo_base_url(),
         api_key=_mimo_api_key(),
         temperature=0.2,
-        max_tokens=2048,
+        max_tokens=4096,
     )
 
 
