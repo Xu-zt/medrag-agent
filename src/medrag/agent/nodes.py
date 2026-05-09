@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 MAX_REWRITES = 1          # up to 2 retrieval attempts total (reduced from 2 to prevent query drift)
-MAX_REGEN    = 1          # up to 2 generation attempts total
+MAX_REGEN    = 0          # disabled: regen causes "insufficient evidence" trap more often than it helps
 GRADE_THRESHOLD = 0.6     # relevance score below this triggers rewrite (base threshold)
 
 # Dynamic grade thresholds by query type (router output)
