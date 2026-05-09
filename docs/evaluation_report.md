@@ -1,6 +1,6 @@
 # VeritasMed 评估报告
 
-> 版本: v1.0 · 日期: 2026-05-08  
+> 版本: v1.1 · 日期: 2026-05-09  
 > 评测对象: MedRAG-Agent (P3 Static → P4-Agentic → Stage 2 Smart Routing)  
 > 语料: 44,768 chunks (1,975 PubMed + 42,793 PMC)
 
@@ -435,6 +435,65 @@ Phase 3 (1 week): Expand evaluation
 
 ---
 
+## 8. 优化实验记录
+
+### 8.1 优化方案实施
+
+Phase 1+2 的 6 项优化已全部实施：
+
+| 编号 | 优化 | 代码变更 | 状态 |
+|------|------|----------|------|
+| A | REGEN prompt + regen 上下文传递 | `prompts.py`: REGEN_SYSTEM/USER, `nodes.py`: regen prompt 切换 | 已实施 |
+| B | chunk 截断 1000→2000 chars + judge context 6000→10000 | `09_eval_answer.py`, `11_eval_agent.py` | 已实施 |
+| C | 动态 grade 阈值 (factual=0.5, synthesis=0.6, multihop=0.7) | `nodes.py`: _GRADE_THRESHOLDS, `graph.py`: _after_grade | 已实施 |
+| D1 | REWRITE_SYSTEM 意图保持约束 (60% keywords) | `prompts.py`: REWRITE_SYSTEM | 已实施 |
+| D2 | max_rewrites 2→1 | `nodes.py`: MAX_REWRITES | 已实施 |
+| E | Reranker auto-detect CUDA | `nodes.py`: _get_reranker | 已实施 |
+
+### 8.2 v2 实验 (全部 6 项优化，MAX_REGEN=1)
+
+**结果**：composite 从 0.685 降至 0.580 (−0.105)
+
+**根因**：REGEN prompt 导致 7 个原本正确的答案被覆盖为 "insufficient evidence"。
+faithfulness checker 的 false positive + REGEN 的 "insufficient evidence" 倾向 = 灾难性组合。
+
+### 8.3 v3 实验 (禁用 regen，MAX_REGEN=0)
+
+**结果**：composite 0.638 (vs v1 的 0.685，−0.047)
+
+| 指标 | v1 (原版) | v3 (MAX_REGEN=0) | 差异 |
+|------|-----------|-------------------|------|
+| Composite | 0.685 | 0.638 | −0.047 |
+| Faithfulness | 0.756 | 0.792 | +0.036 |
+| Relevance | 0.699 | 0.633 | −0.065 |
+| Correctness | 0.600 | 0.487 | −0.113 |
+| Insufficient evidence | 8/39 | 12/39 | +4 |
+
+**分析**：
+- 7 cases 从 answer → insufficient evidence (回归)
+- 3 cases 从 insufficient → answer (改善)
+- 净效果为负：禁用 regen 丢失了 3 个 regen 正确修复的 cases (A04, B08, D14)
+
+### 8.4 v4 实验 (智能 regen，MAX_REGEN=1 + smart gate)
+
+**设计**：保留 regen 但增加智能门控——如果 first-gen answer 已有 citations 且 confidence ≥ 0.3，
+即使 faithfulness check 报告 unfaithful，也跳过 regen（防止 false positive 覆盖好答案）。
+
+**代码变更**：
+- `nodes.py`: MAX_REGEN=1, REGEN_CONFIDENCE_SKIP=0.3
+- `graph.py`: _after_check() 增加 smart gate 逻辑
+
+**状态**：⏳ 待评测 (MiMo API 当前返回空响应，需等待服务恢复)
+
+### 8.5 关键发现
+
+1. **Faithfulness checker 不可靠**：对 nuanced medical answers 有高 false positive rate
+2. **REGEN 的 "insufficient evidence" 陷阱**：REGEN prompt 过于保守，倾向于放弃而非修正
+3. **LLM 非确定性**：4/7 v3 回归 cases 是因为 LLM 生成了不同输出（相同输入）
+4. **Smart gate 是正确方向**：用 confidence + citations 作为 regen 触发条件比 faithfulness check 更可靠
+
+---
+
 ## 附录
 
 ### A. 运行命令参考
@@ -468,6 +527,8 @@ python scripts/11_eval_agent.py \
 | `data/eval/agent_eval_stage2.json` | Stage 2 标准集评测结果 |
 | `data/eval/p3_hard_eval.json` | P3 Hard Set 评测结果 |
 | `data/eval/agent_eval_hard.json` | P4 Hard Set 评测结果 |
+| `data/eval/agent_eval_hard_v1.json` | P4 Hard Set v1 (优化前基线) |
+| `data/eval/agent_eval_hard_v4.json` | P4 Hard Set v4 (智能 regen，待完成) |
 | `docs/hard_set_report.md` | Hard Set 专项报告 |
 
 ---

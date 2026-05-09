@@ -52,8 +52,9 @@ logger = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 MAX_REWRITES = 1          # up to 2 retrieval attempts total (reduced from 2 to prevent query drift)
-MAX_REGEN    = 0          # disabled: regen causes "insufficient evidence" trap more often than it helps
+MAX_REGEN    = 1          # 1 regen attempt; skip if first answer has good citations
 GRADE_THRESHOLD = 0.6     # relevance score below this triggers rewrite (base threshold)
+REGEN_CONFIDENCE_SKIP = 0.3  # skip regen if first-gen confidence >= this AND has citations
 
 # Dynamic grade thresholds by query type (router output)
 _GRADE_THRESHOLDS = {
@@ -443,5 +444,6 @@ __all__ = [
     "MAX_REGEN",
     "GRADE_THRESHOLD",
     "_GRADE_THRESHOLDS",
+    "REGEN_CONFIDENCE_SKIP",
     "HISTORY_SUMMARIZE_EVERY",
 ]

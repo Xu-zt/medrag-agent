@@ -48,6 +48,7 @@ from medrag.agent.nodes import (
     MAX_REWRITES,
     GRADE_THRESHOLD,
     _GRADE_THRESHOLDS,
+    REGEN_CONFIDENCE_SKIP,
     HISTORY_SUMMARIZE_EVERY,
     check_faithfulness,
     generate_answer_node,
@@ -99,14 +100,27 @@ def _after_grade(state: AgentState) -> str:
 def _after_check(state: AgentState) -> str:
     """Route after check_faithfulness:
       - faithful → END (via summarize gate)
+      - first-gen answer has citations + sufficient confidence → skip regen (trust it)
       - regen_count < MAX_REGEN → increment counter then re-generate
       - cap hit → END (faithfulness_issues preserved)
     """
     faithful    = state.get("faithful", False)
     regen_count = state.get("regen_count", 0)
+    confidence  = state.get("confidence", 0.0)
+    citations   = state.get("citations", [])
 
     if faithful:
         return "end"
+
+    # Smart gate: if first-gen answer has real citations and decent confidence,
+    # trust it even if faithfulness check flagged issues.  The faithfulness
+    # checker has a high false-positive rate on nuanced medical answers.
+    if regen_count == 0 and citations and confidence >= REGEN_CONFIDENCE_SKIP:
+        logger.warning(
+            "[graph] unfaithful but first-gen has %d citations (conf=%.2f) — skipping regen",
+            len(citations), confidence)
+        return "end"
+
     if regen_count < MAX_REGEN:
         logger.warning("[graph] unfaithful — re-generating (regen_count=%d)", regen_count)
         return "regenerate"
