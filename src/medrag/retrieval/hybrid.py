@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from typing import TYPE_CHECKING
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import SparseVector
 
-from medrag.index.embedder import BGEM3Embedder
 from medrag.retrieval.retriever import RetrievedChunk
+
+if TYPE_CHECKING:
+    from medrag.index.embedder import BGEM3Embedder
 
 
 def _reciprocal_rank_fusion(

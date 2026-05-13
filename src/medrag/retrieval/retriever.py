@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from typing import TYPE_CHECKING
+
 from qdrant_client import QdrantClient
 
-from medrag.index.embedder import BGEM3Embedder
+if TYPE_CHECKING:
+    from medrag.index.embedder import BGEM3Embedder
 
 
 @dataclass
