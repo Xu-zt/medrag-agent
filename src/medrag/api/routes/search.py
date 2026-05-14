@@ -3,6 +3,7 @@ GET /api/search — standalone hybrid retrieval (no agent loop).
 """
 from __future__ import annotations
 
+import os
 import time
 from functools import lru_cache
 
@@ -20,14 +21,14 @@ router = APIRouter()
 def _retriever() -> HybridRetriever:
     from qdrant_client import QdrantClient
     from medrag.index.embedder import BGEM3Embedder
-    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"), timeout=30)
     embedder = BGEM3Embedder(device="cpu")
     return HybridRetriever(qdrant, embedder, candidate_k=20)
 
 
 @lru_cache(maxsize=1)
 def _reranker() -> BGEReranker:
-    return BGEReranker(device="cpu")
+    return BGEReranker(device=os.environ.get("RERANKER_DEVICE", "cpu"))
 
 
 @router.get("/api/search", response_model=SearchResponse)

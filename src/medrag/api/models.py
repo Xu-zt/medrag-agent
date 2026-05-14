@@ -141,4 +141,4 @@ class CorpusStats(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     qdrant: str
-    ollama: str
+    llm: str

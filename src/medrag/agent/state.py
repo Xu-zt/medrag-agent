@@ -2,7 +2,7 @@
 
 Two-tier memory architecture:
   L1 — LangGraph SqliteSaver checkpointer (crash recovery, multi-turn)
-  L2 — rolling summarization every 5 turns (long-context compression)
+  L2 — rolling summarization every 10 turns (long-context compression)
 """
 from __future__ import annotations
 
@@ -17,6 +17,11 @@ class AgentState(TypedDict):
     query: str
     """Current (possibly rewritten) query sent to the retriever."""
 
+    original_query: str
+    """The user's original query before any rewrites.
+    Set by route_query and preserved through the loop; used by append_history
+    so conversation history records what the user actually asked."""
+
     query_type: str
     """Router classification: 'factual' | 'synthesis' | 'multihop'.
     Used by grade_relevance for dynamic threshold selection."""
@@ -30,7 +35,11 @@ class AgentState(TypedDict):
 
     # ── Grading ──────────────────────────────────────────────────────────────
     relevance_score: float
-    """0-1 score from the grade node; < 0.6 triggers a rewrite."""
+    """0-1 score from the grade node; < threshold triggers a rewrite."""
+
+    relevant: bool
+    """LLM's boolean relevance judgment from the grade node.
+    Used by evaluate_query and for audit; routing uses relevance_score."""
 
     grade_reason: str
     """Human-readable explanation from the grade node (for audit log)."""

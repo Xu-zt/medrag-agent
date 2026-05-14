@@ -46,8 +46,9 @@ _SPECIAL_TOKEN_MAP = {
     "<|system|>":    "[SYS]",
     "<|user|>":      "[USR]",
     "<|assistant|>": "[AST]",
-    "###":           "##",       # Alpaca-style instruction marker
-    "INST":          "INSTR",    # Llama instruction marker (partial neutralisation)
+    "###":           "##",        # Alpaca-style instruction marker
+    "[INST]":        "[INSTR]",   # Llama2 instruction start marker — exact match only
+    "[/INST]":       "[/INSTR]",  # Llama2 instruction end marker — prevents [INST]…[/INST] injection
 }
 
 

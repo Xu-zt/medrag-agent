@@ -9,6 +9,7 @@ description = "MedRAG-Agent (dependency manifest; install via conda environment.
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  # Retrieval / embedding
   "qdrant-client>=1.12",
   # NOTE: sentence-transformers intentionally omitted. We use FlagEmbedding's
   # BGEM3FlagModel and FlagReranker directly, which bypass sentence_transformers
@@ -16,15 +17,25 @@ dependencies = [
   # violation crashes in some envs (see _smoke_bge_only.py). Add back if needed.
   "FlagEmbedding>=1.3",
   "torch>=2.6",
+  # LangChain / LangGraph
   "langgraph>=0.2.50",
   "langchain-core>=0.3",
-  "langchain-ollama>=0.2",
+  "langchain-openai>=0.1.20",
+  "openai>=1.30",
+  # FastAPI / MCP server
+  "fastapi>=0.111",
+  "uvicorn[standard]>=0.30",
+  "fastmcp>=2.0",
+  "pydantic>=2.7",
+  # Data ingestion
   "biopython>=1.84",
   "pymupdf>=1.24",
+  # Utilities
   "tenacity>=9.0",
   "python-dotenv>=1.0",
   "tqdm>=4.66",
   "httpx>=0.27",
+  "pyarrow>=15.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +43,8 @@ dev = [
   "ruff",
   "pytest",
   "ipykernel",
+  "streamlit>=1.35",
+  "langchain-ollama>=0.2",   # only needed when LLM_BACKEND=ollama
 ]
 
 [tool.ruff]

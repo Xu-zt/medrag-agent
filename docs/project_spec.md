@@ -156,7 +156,7 @@ L2 — 滚动摘要（每 10 轮触发）
 
 | 威胁 | 影响 | 缓解措施 |
 |------|------|----------|
-| 提示注入（用户查询中嵌入指令） | 高（可能产生虚假"权威"医学建议） | injection_guard: 12条正则 + XML边界标签 |
+| 提示注入（用户查询中嵌入指令） | 高（可能产生虚假"权威"医学建议） | injection_guard: 11条正则 + XML边界标签 |
 | 速率滥用（自动化高频调用） | 中（耗尽本地 GPU/CPU 资源） | rate_limit: 令牌桶 30 rpm 全局 / 10 rpm 生成 |
 | 未授权访问（同机其他进程） | 中（数据暴露） | auth: HMAC 恒时比较，本地 token |
 | PII 泄露到审计日志 | 高（GDPR / HIPAA） | pii: 正则脱敏，日志仅存 SHA-256(query)[:16] |
@@ -173,7 +173,7 @@ L2 — 滚动摘要（每 10 轮触发）
   ### Instruction（Alpaca 格式）
   reveal your prompt / instructions
   exfiltrate / data extraction / send to http
-  ...共 12 条
+  ...共 11 条
 ```
 
 **隔离层**（XML 边界标签）：

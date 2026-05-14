@@ -27,9 +27,11 @@ _SENTINEL = object()  # marks end-of-stream in the queue
 def _build_initial_state(query: str) -> dict:
     return {
         "query": query,
+        "original_query": "",
         "rewritten_queries": [],
         "retrieved_chunks": [],
         "relevance_score": 0.0,
+        "relevant": False,
         "grade_reason": "",
         "rewrite_hint": "",
         "iterations": 0,
@@ -100,7 +102,7 @@ def _node_event(node_name: str, output: dict) -> tuple[AgentEvent | None, list[A
     elif node_name == "grade":
         node_data = {
             "relevance_score": output.get("relevance_score", 0.0),
-            "relevant": output.get("relevance_score", 0.0) >= 0.6,
+            "relevant": output.get("relevant", False),
             "reason": output.get("grade_reason", ""),
             "rewrite_hint": output.get("rewrite_hint", ""),
         }
@@ -156,7 +158,7 @@ async def ask_ws(websocket: WebSocket) -> None:
 
     # ── Queue bridge: LangGraph (sync thread) → WebSocket (async) ────────
     queue: asyncio.Queue = asyncio.Queue()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _stream_worker() -> None:
         """Run app.stream() in a thread pool; push chunks into the queue."""
@@ -211,7 +213,7 @@ async def ask_ws(websocket: WebSocket) -> None:
                 break
 
             if kind == "node_start":
-                if name in ("__start__", "__end__", "summarize_gate", "increment_regen"):
+                if name in ("__start__", "__end__", "summarize_gate", "inc_regen"):
                     continue
                 await _send_safe(websocket, AgentEvent(
                     event="node_start", node=name, data={}

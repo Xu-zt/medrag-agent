@@ -116,20 +116,27 @@ def _get_reranker():
     global _reranker
     if _reranker is None:
         from medrag.retrieval.reranker import BGEReranker
-        _reranker = BGEReranker(device="cpu")
+        import os
+        device = os.environ.get("RERANKER_DEVICE", "cpu")
+        _reranker = BGEReranker(device=device)
     return _reranker
 
 
 # ── Security helpers ───────────────────────────────────────────────────────────
 
 def _security_check(query: str, token: str, is_generate: bool = False) -> str:
-    """Run auth → rate_limit → injection_guard; return sanitised query.
+    """Run auth → rate_limit → pii_redact → injection_guard; return sanitised query.
+
+    PII redaction happens before the query reaches any LLM or retrieval call,
+    satisfying HIPAA/GDPR data-minimisation requirements.  The audit log still
+    hashes the *original* query (caller's responsibility) for correlation.
 
     Raises AuthError, RateLimitError, or InjectionGuardError on violation.
     """
+    from medrag.mcp_server.security.pii import redact
     verify_token(token)
     check_rate_limit(is_generate=is_generate)
-    return sanitise_query(query)
+    return sanitise_query(redact(query))
 
 
 # ── MCP server ─────────────────────────────────────────────────────────────────
@@ -217,7 +224,7 @@ def ask_agent(
     Pipeline:
       1. Hybrid retrieval (dense + sparse RRF)
       2. Cross-encoder reranking
-      3. Relevance grading — rewrites query up to 2× if chunks are insufficient
+      3. Relevance grading — rewrites query up to 1× if chunks are insufficient
       4. Answer generation with inline citations
       5. Faithfulness check — re-generates once if answer contains hallucinations
 
@@ -243,9 +250,11 @@ def ask_agent(
         config = {"configurable": {"thread_id": thread_id}}
         initial_state = {
             "query": sanitised,
+            "original_query": "",   # set by route_query node
             "rewritten_queries": [],
             "retrieved_chunks": [],
             "relevance_score": 0.0,
+            "relevant": False,
             "grade_reason": "",
             "rewrite_hint": "",
             "iterations": 0,
@@ -255,19 +264,13 @@ def ask_agent(
             "faithful": False,
             "faithfulness_issues": "",
             "regen_count": 0,
-            "history": [{"query": sanitised, "answer": ""}],
+            "history": [],          # append_history node adds the completed turn
             "summary": "",
         }
 
         usage = _UsageAccumulator()
         config_with_cb = {**config, "callbacks": [usage]}
         result = app.invoke(initial_state, config=config_with_cb)
-
-        # Update history with the answer
-        if result.get("answer"):
-            history = result.get("history", [])
-            if history and history[-1].get("query") == sanitised:
-                history[-1]["answer"] = result["answer"]
 
         return {
             "answer": result.get("answer", ""),
@@ -336,10 +339,13 @@ def evaluate_query(
         # Build minimal state for the grade node
         state = {
             "query": sanitised,
+            "original_query": sanitised,
             "retrieved_chunks": chunks,
             "relevance_score": 0.0,
+            "relevant": False,
             "grade_reason": "",
             "rewrite_hint": "",
+            "query_type": "",       # defaults to "synthesis" inside grade_relevance
             "iterations": 0,
             "rewritten_queries": [],
             "answer": "",
@@ -354,7 +360,7 @@ def evaluate_query(
 
         result = grade_relevance(state)
         return {
-            "relevant": result["relevance_score"] >= 0.6,
+            "relevant": result["relevant"],   # LLM boolean judgment, threshold-aware
             "score": result["relevance_score"],
             "reason": result["grade_reason"],
             "rewrite_hint": result["rewrite_hint"],

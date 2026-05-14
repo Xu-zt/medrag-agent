@@ -113,7 +113,7 @@ ask_agent(query="...", token="<token>")
 **Two defenses**:
 
 #### Defense A — Pattern Detection
-12 regex patterns block known injection techniques before any LLM call:
+11 regex patterns block known injection techniques before any LLM call:
 
 ```
 ignore previous/above/all instructions

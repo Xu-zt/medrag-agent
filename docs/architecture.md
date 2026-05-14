@@ -1,7 +1,7 @@
 # MedRAG-Agent — Architecture Reference
 
 > Version: Week 5 (2026-05-06)  
-> Stack: LangGraph 0.2 · FastMCP 2.x · Qwen3-8B (Ollama) · BGE-M3 · BGE-Reranker-v2-m3 · Qdrant
+> Stack: LangGraph 0.2 · FastMCP 2.x · MiMo V2.5/V2.5-Pro (API) · BGE-M3 · BGE-Reranker-v2-m3 · Qdrant
 
 ---
 
@@ -77,19 +77,20 @@ MedRAG-Agent is a retrieval-augmented generation (RAG) system for medical litera
 | `generate` | `llm_fast` | OFF | Structured JSON answer: {answer, citations, confidence} |
 | `check` | `llm_think` | ON | Binary faithfulness audit |
 | `inc_regen` | — | — | Increment `regen_count` before re-generation loop |
+| `append_history` | — | — | Persist completed Q&A turn to `state["history"]` |
 | `summarize_gate` | — | — | Passthrough: decide whether to compress history |
 | `summarize` | `llm_fast` | OFF | Compress history to ≤200-word rolling summary |
 
 ### 2.1 Dual-LLM Strategy
 
 ```
-llm_fast  (qwen3:8b, thinking=OFF, temp=0.2, ctx=4096)
+llm_fast  (mimo-v2.5, thinking=OFF, temp=0.2, ctx=4096)
   → route, generate, summarize
-  → Low latency (~1–3 s), deterministic output
+  → Low latency (~0.5–2 s), deterministic output
 
-llm_think (qwen3:8b, thinking=ON, temp=0.6, ctx=6144)
+llm_think (mimo-v2.5-pro, thinking=ON, temp=0.6, ctx=6144)
   → grade, rewrite, check
-  → Deep reasoning (+3–8 s), better at:
+  → Deep reasoning (+1–3 s), better at:
      - detecting insufficient context
      - suggesting MeSH-aware rewrites
      - cross-referencing claims vs. chunks
@@ -99,14 +100,15 @@ llm_think (qwen3:8b, thinking=ON, temp=0.6, ctx=6144)
 
 ```
 After grade:
-  relevance_score ≥ 0.6  →  generate
-  score < 0.6, iterations < 2  →  rewrite
-  score < 0.6, iterations ≥ 2  →  generate (best-effort, cap hit)
+  relevance_score ≥ threshold (factual=0.5/synthesis=0.6/multihop=0.7)  →  generate
+  score < threshold, iterations < 1  →  rewrite
+  score < threshold, iterations ≥ 1  →  generate (best-effort, cap hit)
 
 After check:
-  faithful = True  →  summarize_gate  →  END
-  faithful = False, regen_count < 1  →  inc_regen  →  generate
-  faithful = False, regen_count ≥ 1  →  summarize_gate  →  END
+  faithful = True              →  append_history  →  summarize_gate  →  END
+  unfaithful, first-gen has citations + confidence ≥ 0.3  →  append_history (smart gate)
+  unfaithful, regen_count < 1  →  inc_regen  →  generate
+  unfaithful, regen_count ≥ 1  →  append_history  →  summarize_gate  →  END
 ```
 
 ---
@@ -186,12 +188,13 @@ P2 output (top-20 candidates)
 4. Node execution:
    route    → classify query type (no external calls)
    retrieve → Qdrant hybrid query (2 HTTP calls, ~0.5 s)
-   rerank   → BGE-Reranker inference (~20 s on CPU for 20 pairs)
-   grade    → Qwen3 thinking call (~5–10 s)
-   [rewrite → retrieve → rerank → grade  × up to 2 rewrites]
-   generate → Qwen3 fast call (~2–5 s)
-   check    → Qwen3 thinking call (~5–10 s)
+   rerank   → BGE-Reranker inference (~0.2 s GPU / ~15 s CPU for 20 pairs)
+   grade    → MiMo-V2.5-Pro thinking call (~1–3 s)
+   [rewrite → retrieve → rerank → grade  × up to 1 rewrite]
+   generate → MiMo-V2.5 fast call (~1–2 s)
+   check    → MiMo-V2.5-Pro thinking call (~1–3 s)
    [inc_regen → generate → check  × 1 regen if unfaithful]
+   append_history → persist Q&A turn
 
 5. SqliteSaver persists state snapshot to data/checkpoints/agent.db
 

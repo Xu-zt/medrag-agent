@@ -18,6 +18,7 @@ Each line is a JSON object:
 """
 
 import argparse
+import hashlib
 import io
 import json
 import re
@@ -165,6 +166,12 @@ def main():
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
     print(f"[output] 已写入 {len(filled)} 道题 → {out_path}")
+
+    # Write companion SHA-256 checksum
+    digest = hashlib.sha256(out_path.read_bytes()).hexdigest()
+    sha_path = out_path.with_suffix(out_path.suffix + ".sha256")
+    sha_path.write_text(f"{digest}  {out_path.name}\n", encoding="utf-8")
+    print(f"[checksum] SHA-256 → {sha_path} ({digest[:16]}…)")
 
     # 打印简要统计
     if filled:
