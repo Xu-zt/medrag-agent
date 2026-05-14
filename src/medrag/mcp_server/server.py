@@ -24,6 +24,7 @@ from __future__ import annotations
 # Windows + CUDA: preload pyarrow before torch to avoid access violation (0xC0000005)
 import pyarrow.dataset  # noqa: F401
 
+import contextlib
 import io
 import logging
 import os
@@ -37,6 +38,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-8-s
 
 from fastmcp import FastMCP
 
+from medrag.agent.nodes import _get_retriever, _get_reranker
 from medrag.mcp_server.security import (
     AuthError,
     InjectionGuardError,
@@ -94,34 +96,6 @@ class _UsageAccumulator:
         pass
 
 
-# ── Lazy singletons ────────────────────────────────────────────────────────────
-
-_retriever = None
-_reranker  = None
-
-
-def _get_retriever():
-    global _retriever
-    if _retriever is None:
-        from qdrant_client import QdrantClient
-        from medrag.index.embedder import BGEM3Embedder
-        from medrag.retrieval.hybrid import HybridRetriever
-        qdrant   = QdrantClient(url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"), timeout=30)
-        embedder = BGEM3Embedder(device="cpu")
-        _retriever = HybridRetriever(qdrant, embedder, candidate_k=20)
-    return _retriever
-
-
-def _get_reranker():
-    global _reranker
-    if _reranker is None:
-        from medrag.retrieval.reranker import BGEReranker
-        import os
-        device = os.environ.get("RERANKER_DEVICE", "cpu")
-        _reranker = BGEReranker(device=device)
-    return _reranker
-
-
 # ── Security helpers ───────────────────────────────────────────────────────────
 
 def _security_check(query: str, token: str, is_generate: bool = False) -> str:
@@ -137,6 +111,23 @@ def _security_check(query: str, token: str, is_generate: bool = False) -> str:
     verify_token(token)
     check_rate_limit(is_generate=is_generate)
     return sanitise_query(redact(query))
+
+
+@contextlib.contextmanager
+def _audit_tool(name: str, query: str):
+    """Context manager: measures latency and calls log_tool_call on exit."""
+    t0 = time.perf_counter()
+    status = "ok"
+    try:
+        yield
+    except (AuthError, RateLimitError, InjectionGuardError) as exc:
+        status = f"rejected:{type(exc).__name__}"
+        raise
+    except Exception as exc:
+        status = f"error:{type(exc).__name__}"
+        raise
+    finally:
+        log_tool_call(name, query, status, (time.perf_counter() - t0) * 1000)
 
 
 # ── MCP server ─────────────────────────────────────────────────────────────────
@@ -177,9 +168,7 @@ def search_literature(
     Returns:
         List of dicts: rank, citation, score, snippet (500 chars), source, doc_id.
     """
-    t0 = time.perf_counter()
-    status = "ok"
-    try:
+    with _audit_tool("search_literature", query):
         sanitised = _security_check(query, token, is_generate=False)
         k = max(1, min(k, 10))
 
@@ -202,15 +191,6 @@ def search_literature(
             }
             for i, c in enumerate(chunks)
         ]
-    except (AuthError, RateLimitError, InjectionGuardError) as exc:
-        status = f"rejected:{type(exc).__name__}"
-        raise
-    except Exception as exc:
-        status = f"error:{type(exc).__name__}"
-        raise
-    finally:
-        log_tool_call("search_literature", query, status,
-                      (time.perf_counter() - t0) * 1000)
 
 
 @mcp.tool()
@@ -317,9 +297,7 @@ def evaluate_query(
     Returns:
         Dict: relevant (bool), score (0–1), reason (str), rewrite_hint (str).
     """
-    t0 = time.perf_counter()
-    status = "ok"
-    try:
+    with _audit_tool("evaluate_query", query):
         sanitised = _security_check(query, token, is_generate=False)
 
         from medrag.agent.nodes import grade_relevance
@@ -365,15 +343,6 @@ def evaluate_query(
             "reason": result["grade_reason"],
             "rewrite_hint": result["rewrite_hint"],
         }
-    except (AuthError, RateLimitError, InjectionGuardError) as exc:
-        status = f"rejected:{type(exc).__name__}"
-        raise
-    except Exception as exc:
-        status = f"error:{type(exc).__name__}"
-        raise
-    finally:
-        log_tool_call("evaluate_query", query, status,
-                      (time.perf_counter() - t0) * 1000)
 
 
 @mcp.tool()
