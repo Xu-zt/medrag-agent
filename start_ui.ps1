@@ -1,16 +1,21 @@
-# VeritasMed — One-click Web UI
+# VeritasMed — backend dev server
+#
+# Starts the FastAPI backend on :8000.  The frontend is served separately:
+#   cd frontend
+#   npm install          # first time only
+#   npm run dev          # Vite dev server on http://localhost:5173
+#
+# Both must run at the same time for the full UI.
+# frontend/.env.local must contain:  VITE_API_URL=http://localhost:8000
 #
 # Usage:
-#   .\start_ui.ps1              # starts backend; open http://localhost:8000
-#   .\start_ui.ps1 -Port 9000   # custom port
+#   .\start_ui.ps1              # backend on http://localhost:8000
+#   .\start_ui.ps1 -Port 9000   # custom backend port
 #
 # Prerequisites:
-#   1. conda env "medrag" exists  (conda env create -f environment.yml)
-#   2. .env file in project root  (copy .env.example .env  then fill in keys)
+#   1. conda env "medrag" active  (conda env create -f environment.yml)
+#   2. .env in project root       (copy .env.example .env  then add API keys)
 #   3. Qdrant running             (docker run -d -p 6333:6333 qdrant/qdrant:latest)
-#
-# For frontend hot-reload (HMR) during development, also run in a second terminal:
-#   cd frontend; npm run dev    (then open http://localhost:5173 instead)
 param([int]$Port = 8000)
 
 $Root = $PSScriptRoot
@@ -31,7 +36,7 @@ function Find-Python {
 }
 
 Write-Host ""
-Write-Host "=== VeritasMed Web UI ===" -ForegroundColor Cyan
+Write-Host "=== VeritasMed backend ===" -ForegroundColor Cyan
 Write-Host ""
 
 # ── Python ────────────────────────────────────────────────────────────────────
@@ -60,17 +65,15 @@ try {
     Write-Host "  docker run -d -p 6333:6333 qdrant/qdrant:latest" -ForegroundColor Yellow
 }
 
-# ── Frontend dist ─────────────────────────────────────────────────────────────
-if (-not (Test-Path "$Root\frontend\dist\index.html")) {
-    Write-Host "[INFO] Building frontend (first run)..." -ForegroundColor Cyan
-    Push-Location "$Root\frontend"
-    npm install --silent
-    npm run build
-    Pop-Location
+# ── Frontend reminder ─────────────────────────────────────────────────────────
+if (-not (Test-Path "$Root\frontend\node_modules")) {
+    Write-Host "[WARN] frontend/node_modules missing — run: cd frontend; npm install" -ForegroundColor Yellow
 }
-
 Write-Host ""
-Write-Host "Starting server on http://localhost:$Port ..." -ForegroundColor Cyan
+Write-Host "  Frontend:  cd frontend && npm run dev   -> http://localhost:5173" -ForegroundColor DarkGray
+Write-Host ""
+
+Write-Host "Starting backend on http://localhost:$Port ..." -ForegroundColor Cyan
 Write-Host "Press Ctrl+C to stop." -ForegroundColor DarkGray
 Write-Host ""
 

@@ -41,11 +41,6 @@ export interface AppState {
   pushLiveChunk: (chunk: ChunkOut) => void
   clearLiveChunks: () => void
 
-  // Answer streaming
-  streamingAnswer: string
-  appendAnswerToken: (token: string) => void
-  clearStreamingAnswer: () => void
-
   // Final result
   result: AnswerOut | null
   setResult: (r: AnswerOut | null) => void
@@ -82,11 +77,6 @@ export const useStore = create<AppState>((set) => ({
   liveChunks: [],
   pushLiveChunk: (chunk) => set((s) => ({ liveChunks: [...s.liveChunks, chunk] })),
   clearLiveChunks: () => set({ liveChunks: [] }),
-
-  streamingAnswer: '',
-  appendAnswerToken: (token) =>
-    set((s) => ({ streamingAnswer: s.streamingAnswer + token })),
-  clearStreamingAnswer: () => set({ streamingAnswer: '' }),
 
   result: null,
   setResult: (r) => set({ result: r }),

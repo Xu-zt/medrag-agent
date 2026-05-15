@@ -30,8 +30,6 @@ export function useAgentStream() {
     pushNode,
     pushLiveChunk,
     clearLiveChunks,
-    appendAnswerToken,
-    clearStreamingAnswer,
     setResult,
     setSelectedChunkId,
     setErrorMessage,
@@ -44,7 +42,6 @@ export function useAgentStream() {
 
     setTimeline([])
     clearLiveChunks()
-    clearStreamingAnswer()
     setResult(null)
     setSelectedChunkId(null)
     setErrorMessage(null)
@@ -150,7 +147,6 @@ export function useAgentStream() {
     query, threadId, pipeline,
     setStreaming, setTimeline, updateNode, pushNode,
     pushLiveChunk, clearLiveChunks,
-    appendAnswerToken, clearStreamingAnswer,
     setResult, setSelectedChunkId, setErrorMessage,
   ])
 

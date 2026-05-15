@@ -135,9 +135,9 @@ function FaithfulnessBadge({
 // ── AnswerPanel ────────────────────────────────────────────────────────────
 
 export function AnswerPanel() {
-  const { result, streamingAnswer, isStreaming, setSelectedChunkId, errorMessage } = useStore()
+  const { result, isStreaming, setSelectedChunkId, errorMessage } = useStore()
 
-  const displayText = result?.answer ?? streamingAnswer
+  const displayText = result?.answer ?? ''
 
   // Error banner
   if (errorMessage && !isStreaming) {
