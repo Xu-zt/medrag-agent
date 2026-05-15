@@ -233,10 +233,10 @@ class TestNodeTransformations:
         with patch("medrag.agent.nodes.make_llm_fast", return_value=mock_llm):
             result = generate_answer_node(sample_state)
 
-        # Should not raise; answer falls back to raw text
-        assert result["answer"] == "Aspirin inhibits COX-1 and COX-2 enzymes."
+        # Should not raise; uncited claims are dropped → disclaimer
+        assert "do not contain sufficient cited evidence" in result["answer"]
         assert result["citations"] == []
-        assert result["confidence"] == 0.5
+        assert result["confidence"] == 0.0
 
     def test_grade_relevance_trusts_boolean_over_score(self, sample_state):
         from medrag.agent.nodes import grade_relevance

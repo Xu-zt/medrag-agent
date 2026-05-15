@@ -114,14 +114,34 @@ export function AgentTimeline() {
     )
   }
 
+  const lastNode = timeline[timeline.length - 1]
+  const waitingForNextNode = isStreaming && (!lastNode || lastNode.status !== 'running')
+
   return (
     <div className="h-full overflow-y-auto p-4 space-y-0">
       <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
         Reasoning Process
       </h2>
       {timeline.map((node, i) => (
-        <NodeCard key={`${node.name}-${i}`} node={node} isLast={i === timeline.length - 1} />
+        <NodeCard key={`${node.name}-${i}`} node={node} isLast={i === timeline.length - 1 && !waitingForNextNode} />
       ))}
+      {waitingForNextNode && (
+        <div className="flex gap-3 pt-1">
+          <div className="flex flex-col items-center">
+            <Loader2 size={16} className="text-blue-400 animate-spin mt-1" />
+          </div>
+          <div className="pb-4">
+            <span className="text-xs text-slate-400 animate-pulse">
+              {timeline.length === 0 ? 'Initialising…' : 'Loading models / retrieving…'}
+            </span>
+            {timeline.length > 0 && (
+              <p className="text-xs text-slate-300 mt-0.5">
+                First request loads BGE-M3 (~1 min on CPU)
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

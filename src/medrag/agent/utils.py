@@ -50,6 +50,8 @@ def validate_citations(
         if not cite_keys:
             logger.debug("[validate_citations] dropped claim with no cite: %s", claim.get("text", "")[:60])
             continue
+        # Strip brackets the LLM may add (e.g. "[PMC:doc205]" → "PMC:doc205")
+        cite_keys = [k.strip("[]") for k in cite_keys]
         # All cited keys must be in the valid set
         invalid_keys = [k for k in cite_keys if k not in valid]
         if invalid_keys:

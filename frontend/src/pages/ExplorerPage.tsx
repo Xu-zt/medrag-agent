@@ -148,7 +148,7 @@ export function ExplorerPage() {
         {/* Results */}
         <div className="flex-1 overflow-y-auto p-4">
           {error && (
-            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {error}
             </div>
           )}

@@ -1,13 +1,9 @@
-"""Cross-encoder reranker using bge-reranker-v2-m3.
+"""Cross-encoder reranker using bge-reranker-v2-m3 via sentence_transformers.
 
-Device selection via environment variable RERANKER_DEVICE (default: auto):
-
-  RERANKER_DEVICE=auto   → cuda if available, else cpu
-  RERANKER_DEVICE=cuda   → force GPU (use_fp16=True, ~200 ms/20 pairs on RTX 4060)
-  RERANKER_DEVICE=cpu    → force CPU (~20 s/20 pairs)
-
-GPU reranking frees the LLM from having to do its own slow reranking pass
-and is the primary source of end-to-end latency reduction in Stage 3.
+Device selection via RERANKER_DEVICE env var (default: auto):
+  auto  → cuda if available, else cpu
+  cuda  → force GPU (fp16, ~200 ms/20 pairs on RTX 4060)
+  cpu   → force CPU (~20 s/20 pairs)
 """
 from __future__ import annotations
 
@@ -20,9 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_device() -> tuple[str, bool]:
-    """Return (device_str, use_fp16) based on RERANKER_DEVICE env var."""
     setting = os.environ.get("RERANKER_DEVICE", "auto").strip().lower()
-
     if setting == "auto":
         try:
             import torch
@@ -33,12 +27,8 @@ def _resolve_device() -> tuple[str, bool]:
             pass
         logger.info("[reranker] CUDA not available → CPU")
         return "cpu", False
-
     if setting == "cuda":
-        logger.info("[reranker] RERANKER_DEVICE=cuda → GPU (fp16=True)")
         return "cuda", True
-
-    logger.info("[reranker] RERANKER_DEVICE=cpu → CPU")
     return "cpu", False
 
 
@@ -50,7 +40,6 @@ class BGEReranker:
         use_fp16: bool | None = None,
         batch_size: int = 8,
     ):
-        # Explicit args override env; env is resolved once at construction
         if device is None or use_fp16 is None:
             env_device, env_fp16 = _resolve_device()
             device   = device   if device   is not None else env_device
@@ -79,8 +68,7 @@ class BGEReranker:
         pairs = [[query, c.text] for c in chunks]
         scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
 
-        # Sort descending by reranker score, new objects avoid mutating candidates
-        ranked = sorted(zip(scores, chunks), key=lambda x: -x[0])
+        ranked = sorted(zip(scores, chunks), key=lambda x: -float(x[0]))
         return [
             RetrievedChunk(
                 chunk_id=c.chunk_id,
