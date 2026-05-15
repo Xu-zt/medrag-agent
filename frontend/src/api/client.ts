@@ -1,7 +1,9 @@
 import axios from 'axios'
 import type { ChunkContextResponse, CorpusStats, DocumentResponse, SearchResponse } from '../types'
 
-const BASE = ''  // proxied through Vite to http://localhost:8000
+// In dev: set VITE_API_URL=http://localhost:8000 in frontend/.env.local
+// In production: leave unset — frontend and API share the same origin
+const BASE = (import.meta.env.VITE_API_URL as string) ?? ''
 
 export const api = axios.create({ baseURL: BASE })
 
@@ -38,7 +40,12 @@ export async function fetchCorpusStats(): Promise<CorpusStats> {
 // ── WebSocket URL helper ──────────────────────────────────────────────────
 
 export function wsAskUrl(): string {
+  const apiBase = (import.meta.env.VITE_API_URL as string) ?? ''
+  if (apiBase) {
+    // Convert http(s):// to ws(s)://
+    return apiBase.replace(/^http/, 'ws') + '/api/ask'
+  }
+  // Production: derive from current page origin
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  // During dev the Vite proxy forwards ws:// to the backend
   return `${proto}//${window.location.host}/api/ask`
 }

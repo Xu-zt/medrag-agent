@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import { CheckCircle, Circle, AlertCircle, RefreshCw, Loader2, XCircle } from 'lucide-react'
 import { useStore } from '../store'
-import type { TimelineNode } from '../types'
+import type { TimelineNode } from '../types/ws'
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   waiting: <Circle size={16} className="text-slate-400" />,

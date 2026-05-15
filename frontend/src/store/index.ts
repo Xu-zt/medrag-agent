@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { AnswerOut, ChunkOut, TimelineNode } from '../types'
+import type { ChunkOut } from '../types'
+import type { AnswerOut, TimelineNode } from '../types/ws'
 
 // ── Chunk colours (cycle through 8 distinct hues) ────────────────────────
 const CHUNK_COLORS = [

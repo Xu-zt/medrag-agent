@@ -1,9 +1,14 @@
 """
 Pydantic data models for the VeritasMed API.
+
+This file is the single source of truth for the API contract.
+REST types are exposed via FastAPI's /openapi.json endpoint.
+WebSocket event types (AgentEvent variants) are defined here
+and mirrored in frontend/src/types/ws.ts (see that file for the TS side).
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
@@ -11,8 +16,6 @@ from pydantic import BaseModel, Field
 # ── Shared ──────────────────────────────────────────────────────────────────
 
 class ChunkOut(BaseModel):
-    """A single retrieved chunk, ready to send to the frontend."""
-
     chunk_id: str = Field(description="e.g. 'pubmed:12345:0' or 'pmc:doc196:3'")
     citation: str = Field(description="e.g. 'PMID:12345' or 'PMC:doc196'")
     source: str = Field(description="'pubmed' or 'pmc'")
@@ -29,18 +32,66 @@ class ChunkOut(BaseModel):
 
 
 # ── WebSocket event stream ───────────────────────────────────────────────────
+# Each event is a distinct Pydantic model discriminated by the `event` field.
+# ask.py constructs specific event types directly; AgentEvent is the union alias.
 
-class AgentEvent(BaseModel):
-    event: Literal[
-        "node_start",
-        "node_end",
-        "chunk_retrieved",
-        "answer_token",
-        "done",
-        "error",
-    ]
-    node: str | None = None
-    data: dict = Field(default_factory=dict)
+class NodeStartEvent(BaseModel):
+    event: Literal["node_start"] = "node_start"
+    node: str
+
+
+class NodeEndData(BaseModel):
+    """Merged payload for all node_end events — fields are node-specific."""
+    # retrieve / rerank
+    count: int | None = None
+    # grade
+    relevance_score: float | None = None
+    relevant: bool | None = None
+    reason: str | None = None
+    rewrite_hint: str | None = None
+    # rewrite
+    new_query: str | None = None
+    rewritten_queries: list[str] | None = None
+    # generate
+    answer_preview: str | None = None
+    # check
+    faithful: bool | None = None
+    issues: str | None = None
+    confidence: float | None = None
+    # route
+    route: str | None = None
+
+
+class NodeEndEvent(BaseModel):
+    event: Literal["node_end"] = "node_end"
+    node: str
+    data: NodeEndData = Field(default_factory=NodeEndData)
+
+
+class ChunkRetrievedData(BaseModel):
+    chunk_id: str
+    citation: str
+    title: str
+    score: float | None = None
+    text_snippet: str
+    source: str
+    external_url: str
+
+
+class ChunkRetrievedEvent(BaseModel):
+    event: Literal["chunk_retrieved"] = "chunk_retrieved"
+    node: str
+    data: ChunkRetrievedData
+
+
+class ErrorData(BaseModel):
+    message: str
+
+
+class ErrorEvent(BaseModel):
+    event: Literal["error"] = "error"
+    node: None = None
+    data: ErrorData
 
 
 # ── WS request ──────────────────────────────────────────────────────────────
@@ -65,6 +116,20 @@ class AnswerOut(BaseModel):
     chunks: list[ChunkOut]
     thread_id: str
     latency_ms: float
+
+
+class DoneEvent(BaseModel):
+    event: Literal["done"] = "done"
+    node: None = None
+    data: AnswerOut
+
+
+# Discriminated union — the canonical AgentEvent type.
+# Used in OpenAPI schema and TypeScript ws.ts mirror.
+AgentEvent = Annotated[
+    Union[NodeStartEvent, NodeEndEvent, ChunkRetrievedEvent, DoneEvent, ErrorEvent],
+    Field(discriminator="event"),
+]
 
 
 # ── /api/search ──────────────────────────────────────────────────────────────
