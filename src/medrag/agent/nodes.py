@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from functools import lru_cache
 from typing import Any
@@ -75,8 +76,21 @@ def _get_retriever():
     from medrag.index.embedder import BGEM3Embedder
     from medrag.retrieval.hybrid import HybridRetriever
 
-    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
-    embedder = BGEM3Embedder(device="cpu")
+    device = os.environ.get("EMBEDDER_DEVICE", "auto")
+    if device == "auto":
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            device = "cpu"
+    logger.info("[retriever] using device=%s", device)
+
+    # Embedder MUST be created before QdrantClient — loading sentence_transformers
+    # after qdrant_client's gRPC layer is initialized causes a segfault on Windows
+    # due to a native library conflict between grpc and torch C++ runtimes.
+    embedder = BGEM3Embedder(device=device)
+    qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
+    qdrant = QdrantClient(url=qdrant_url, timeout=30)
     return HybridRetriever(qdrant, embedder, candidate_k=CANDIDATE_K)
 
 
@@ -167,9 +181,11 @@ def route_query(state: AgentState) -> dict:
     query_type = parsed.get("type", "factual")
     logger.info("[route] query_type=%s  reason=%s", query_type, parsed.get("reason", ""))
 
-    # Initialise iteration counters if this is a fresh call
+    # Preserve the original query before any rewrites happen; used by append_history
+    # to record what the user actually asked regardless of query reformulations.
     return {
         "query": query,
+        "original_query": query,
         "query_type": query_type,
         "iterations": state.get("iterations", 0),
         "regen_count": state.get("regen_count", 0),
@@ -256,6 +272,7 @@ def grade_relevance(state: AgentState) -> dict:
                 score, relevant, threshold, query_type)
     return {
         "relevance_score": score,
+        "relevant": relevant,
         "grade_reason": reason,
         "rewrite_hint": rewrite_hint,
     }
@@ -414,6 +431,20 @@ def increment_regen(state: AgentState) -> dict:
     return {"regen_count": new_count}
 
 
+# ── Node: append_history ──────────────────────────────────────────────────────
+
+def append_history(state: AgentState) -> dict:
+    """Append the completed Q&A turn to conversation history.
+
+    Called once per turn, just before summarize_gate.  Uses original_query
+    (pre-rewrite) so history records what the user actually asked, not the
+    internally reformulated query.
+    """
+    original = state.get("original_query") or state.get("query", "")
+    answer   = state.get("answer", "")
+    return {"history": [{"query": original, "answer": answer}]}
+
+
 # ── Node: summarize_history ────────────────────────────────────────────────────
 
 def summarize_history(state: AgentState) -> dict:
@@ -458,6 +489,7 @@ __all__ = [
     "generate_answer_node",
     "check_faithfulness",
     "increment_regen",
+    "append_history",
     "summarize_history",
     "MAX_REWRITES",
     "MAX_REGEN",

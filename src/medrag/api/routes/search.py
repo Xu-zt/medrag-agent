@@ -1,33 +1,21 @@
 """
 GET /api/search — standalone hybrid retrieval (no agent loop).
+
+Uses the same singleton retriever/reranker as the agent graph so only one
+BGE-M3 instance is ever loaded per process.
 """
 from __future__ import annotations
 
+import asyncio
 import time
-from functools import lru_cache
 
 from fastapi import APIRouter, Query
 
+from medrag.agent.nodes import _get_retriever, _get_reranker
 from medrag.api._helpers import compute_highlights, payload_to_chunk
 from medrag.api.models import ChunkOut, SearchResponse
-from medrag.retrieval.hybrid import HybridRetriever
-from medrag.retrieval.reranker import BGEReranker
 
 router = APIRouter()
-
-
-@lru_cache(maxsize=1)
-def _retriever() -> HybridRetriever:
-    from qdrant_client import QdrantClient
-    from medrag.index.embedder import BGEM3Embedder
-    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
-    embedder = BGEM3Embedder(device="cpu")
-    return HybridRetriever(qdrant, embedder, candidate_k=20)
-
-
-@lru_cache(maxsize=1)
-def _reranker() -> BGEReranker:
-    return BGEReranker(device="cpu")
 
 
 @router.get("/api/search", response_model=SearchResponse)
@@ -38,17 +26,22 @@ async def search(
     highlight: bool = Query(default=True),
 ) -> SearchResponse:
     t0 = time.perf_counter()
-    retriever = _retriever()
 
-    # Retrieve more candidates for reranking (p3) or direct (p2)
     candidate_k = 20 if pipeline == "p3" else k
-    raw_chunks = retriever.retrieve(q, k=candidate_k)
 
-    if pipeline == "p3":
-        reranker = _reranker()
-        raw_chunks = reranker.rerank(q, raw_chunks, top_k=k)
-    else:
-        raw_chunks = raw_chunks[:k]
+    # Run heavy retrieval in a worker thread so that:
+    # (a) the event loop isn't blocked during model loading / inference
+    # (b) CUDA initialisation happens in a thread, not the asyncio loop
+    #     (avoids STATUS_ACCESS_VIOLATION crash on Windows + ProactorEventLoop)
+    def _retrieve() -> list:
+        raw = _get_retriever().retrieve(q, k=candidate_k)
+        if pipeline == "p3":
+            raw = _get_reranker().rerank(q, raw, top_k=k)
+        else:
+            raw = raw[:k]
+        return raw
+
+    raw_chunks = await asyncio.to_thread(_retrieve)
 
     chunks_out: list[ChunkOut] = []
     for rc in raw_chunks:

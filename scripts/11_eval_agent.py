@@ -37,6 +37,24 @@ ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_FILE = ROOT / "data" / "golden" / "golden_dataset.jsonl"
 OUTPUT_FILE = ROOT / "data" / "eval" / "agent_eval.json"
 
+
+def _verify_golden_checksum(jsonl_path: Path) -> None:
+    """Warn if golden dataset does not match its companion .sha256 file."""
+    import hashlib
+    sha_path = jsonl_path.with_suffix(jsonl_path.suffix + ".sha256")
+    if not sha_path.exists():
+        return
+    expected = sha_path.read_text(encoding="utf-8").split()[0]
+    actual = hashlib.sha256(jsonl_path.read_bytes()).hexdigest()
+    if actual != expected:
+        print(
+            f"[WARN] golden_dataset.jsonl checksum mismatch! "
+            f"Expected {expected[:16]}… got {actual[:16]}…\n"
+            "       Dataset may have been modified. Re-run parse_golden_dataset.py to update.",
+            file=sys.stderr,
+        )
+
+
 # ── Judge prompts (reuse same prompts as script 09) ───────────────────────────
 
 FAITHFULNESS_SYS = (
@@ -188,6 +206,7 @@ def main() -> None:
     if not golden_path.exists():
         raise SystemExit(f"[error] {golden_path} not found.")
 
+    _verify_golden_checksum(golden_path)
     golden = [json.loads(l) for l in golden_path.read_text(encoding="utf-8").splitlines()]
     print(f"[eval] {len(golden)} questions | pipeline=P4-Agentic (LangGraph)", flush=True)
 

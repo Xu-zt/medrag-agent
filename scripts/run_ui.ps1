@@ -1,11 +1,46 @@
-# Run the Streamlit demo UI
-# Usage: .\scripts\run_ui.ps1
+# Run the Streamlit demo UI (lightweight alternative to the full React UI)
+#
+# Usage:
+#   .\scripts\run_ui.ps1
+#   .\scripts\run_ui.ps1 -Port 8502
+#
+# For the full React + FastAPI web UI use: .\start_ui.ps1
+param([int]$Port = 8501)
 
-$env:PYTHONIOENCODING = "utf-8"
-$py = "C:\Users\lijingshan\.conda\envs\medrag\python.exe"
-$streamlit = "C:\Users\lijingshan\.conda\envs\medrag\Scripts\streamlit.exe"
+$Root = Split-Path $PSScriptRoot -Parent
 
-Set-Location "D:\Desktop\Agent\medrag-agent"
+function Find-Python {
+    $candidates = @(
+        "$env:CONDA_PREFIX\python.exe",
+        "$env:USERPROFILE\.conda\envs\medrag\python.exe",
+        "$env:USERPROFILE\miniconda3\envs\medrag\python.exe",
+        "$env:USERPROFILE\anaconda3\envs\medrag\python.exe",
+        "C:\ProgramData\miniconda3\envs\medrag\python.exe",
+        "D:\Anaconda\envs\medrag\python.exe"
+    )
+    foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
+    $inPath = Get-Command python -ErrorAction SilentlyContinue
+    if ($inPath) { return $inPath.Source }
+    return $null
+}
 
-Write-Host "Starting MedRAG-Agent UI at http://localhost:8501" -ForegroundColor Cyan
-& $streamlit run src/medrag/ui/app.py --server.port 8501 --server.headless false
+$py = Find-Python
+if (-not $py) {
+    Write-Host "[ERROR] Python not found. Activate the medrag conda env first." -ForegroundColor Red
+    exit 1
+}
+
+$streamlit = Join-Path (Split-Path $py) "streamlit.exe"
+if (-not (Test-Path $streamlit)) {
+    $streamlit = Join-Path (Split-Path $py) "Scripts\streamlit.exe"
+}
+if (-not (Test-Path $streamlit)) {
+    Write-Host "[ERROR] streamlit not found. Install with: pip install streamlit" -ForegroundColor Red
+    exit 1
+}
+
+$env:PYTHONPATH        = "$Root\src"
+$env:PYTHONIOENCODING  = "utf-8"
+
+Write-Host "Starting MedRAG-Agent Streamlit UI at http://localhost:$Port" -ForegroundColor Cyan
+& $streamlit run "$Root\src\medrag\ui\app.py" --server.port $Port --server.headless false

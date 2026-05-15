@@ -2,8 +2,7 @@
 WebSocket /api/ask — streams the full agentic reasoning loop as events.
 
 Uses asyncio.to_thread + Queue to safely bridge LangGraph's synchronous
-app.stream() into the async WebSocket handler, avoiding issues with
-SqliteSaver not being async-compatible.
+app.stream() into the async WebSocket handler.
 """
 from __future__ import annotations
 
@@ -16,20 +15,34 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from medrag.agent.graph import app as langgraph_app
 from medrag.api._helpers import payload_to_chunk
-from medrag.api.models import AgentEvent, AnswerOut, AskRequest, ChunkOut
+from medrag.api.models import (
+    AskRequest,
+    AnswerOut,
+    ChunkOut,
+    ChunkRetrievedData,
+    ChunkRetrievedEvent,
+    DoneEvent,
+    ErrorData,
+    ErrorEvent,
+    NodeEndData,
+    NodeEndEvent,
+    NodeStartEvent,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_SENTINEL = object()  # marks end-of-stream in the queue
+_SENTINEL = object()
 
 
 def _build_initial_state(query: str) -> dict:
     return {
         "query": query,
+        "original_query": "",
         "rewritten_queries": [],
         "retrieved_chunks": [],
         "relevance_score": 0.0,
+        "relevant": False,
         "grade_reason": "",
         "rewrite_hint": "",
         "iterations": 0,
@@ -45,7 +58,6 @@ def _build_initial_state(query: str) -> dict:
 
 
 async def _send_safe(ws: WebSocket, payload: dict) -> None:
-    """Send JSON to WebSocket, silently ignore closed-connection errors."""
     try:
         await ws.send_json(payload)
     except Exception:
@@ -62,17 +74,14 @@ def _chunks_from_state(state: dict) -> list[ChunkOut]:
     return chunks_out
 
 
-def _node_event(node_name: str, output: dict) -> tuple[AgentEvent | None, list[AgentEvent]]:
-    """
-    Convert a LangGraph stream chunk {node_name: output_dict} into
-    AgentEvents.  Returns (node_end_event, extra_events).
-    """
-    extra: list[AgentEvent] = []
+def _node_event(
+    node_name: str, output: dict
+) -> tuple[NodeEndEvent | None, list[ChunkRetrievedEvent]]:
+    extras: list[ChunkRetrievedEvent] = []
 
     if node_name in ("__start__", "__end__", "summarize_gate"):
-        return None, extra
+        return None, extras
 
-    # ── chunk_retrieved events (one per chunk) ──────────────────────────
     if node_name in ("retrieve", "rerank"):
         chunks = output.get("retrieved_chunks", [])
         for c in chunks:
@@ -82,53 +91,52 @@ def _node_event(node_name: str, output: dict) -> tuple[AgentEvent | None, list[A
                 co = payload_to_chunk(c, score=c.get("score"))
             else:
                 continue
-            extra.append(AgentEvent(
-                event="chunk_retrieved",
+            extras.append(ChunkRetrievedEvent(
                 node=node_name,
-                data={
-                    "chunk_id": co.chunk_id,
-                    "citation": co.citation,
-                    "title": co.title,
-                    "score": co.score,
-                    "text_snippet": co.text[:200],
-                    "source": co.source,
-                    "external_url": co.external_url,
-                },
+                data=ChunkRetrievedData(
+                    chunk_id=co.chunk_id,
+                    citation=co.citation,
+                    title=co.title,
+                    score=co.score,
+                    text_snippet=co.text[:200],
+                    source=co.source,
+                    external_url=co.external_url,
+                ),
             ))
-        node_data: dict[str, Any] = {"count": len(chunks)}
+        data = NodeEndData(count=len(chunks))
 
     elif node_name == "grade":
-        node_data = {
-            "relevance_score": output.get("relevance_score", 0.0),
-            "relevant": output.get("relevance_score", 0.0) >= 0.6,
-            "reason": output.get("grade_reason", ""),
-            "rewrite_hint": output.get("rewrite_hint", ""),
-        }
+        data = NodeEndData(
+            relevance_score=output.get("relevance_score", 0.0),
+            relevant=output.get("relevant", False),
+            reason=output.get("grade_reason", ""),
+            rewrite_hint=output.get("rewrite_hint", ""),
+        )
 
     elif node_name == "rewrite":
         rqs = output.get("rewritten_queries", [])
-        node_data = {
-            "new_query": rqs[-1] if rqs else "",
-            "rewritten_queries": rqs,
-        }
+        data = NodeEndData(
+            new_query=rqs[-1] if rqs else "",
+            rewritten_queries=rqs,
+        )
 
     elif node_name == "generate":
-        node_data = {"answer_preview": output.get("answer", "")[:120]}
+        data = NodeEndData(answer_preview=output.get("answer", "")[:120])
 
     elif node_name == "check":
-        node_data = {
-            "faithful": output.get("faithful", False),
-            "issues": output.get("faithfulness_issues", ""),
-            "confidence": output.get("confidence", 0.0),
-        }
+        data = NodeEndData(
+            faithful=output.get("faithful", False),
+            issues=output.get("faithfulness_issues", ""),
+            confidence=output.get("confidence", 0.0),
+        )
 
     elif node_name == "route":
-        node_data = {"route": output.get("route", "")}
+        data = NodeEndData(route=output.get("route", ""))
 
     else:
-        node_data = {}
+        data = NodeEndData()
 
-    return AgentEvent(event="node_end", node=node_name, data=node_data), extra
+    return NodeEndEvent(node=node_name, data=data), extras
 
 
 @router.websocket("/api/ask")
@@ -137,15 +145,12 @@ async def ask_ws(websocket: WebSocket) -> None:
     t_start = time.perf_counter()
     logger.info("WS /api/ask accepted")
 
-    # ── Parse request ────────────────────────────────────────────────────
     try:
         raw = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
         req = AskRequest(**raw)
     except Exception as exc:
         logger.exception("WS receive/parse error")
-        await _send_safe(websocket, AgentEvent(
-            event="error", data={"message": str(exc)}
-        ).model_dump())
+        await _send_safe(websocket, ErrorEvent(data=ErrorData(message=str(exc))).model_dump())
         await websocket.close()
         return
 
@@ -154,44 +159,27 @@ async def ask_ws(websocket: WebSocket) -> None:
     config: dict = {"configurable": {"thread_id": req.thread_id}}
     initial_state = _build_initial_state(req.query)
 
-    # ── Queue bridge: LangGraph (sync thread) → WebSocket (async) ────────
     queue: asyncio.Queue = asyncio.Queue()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _stream_worker() -> None:
-        """Run app.stream() in a thread pool; push chunks into the queue."""
         try:
-            prev_node: str | None = None
             for chunk in langgraph_app.stream(
-                initial_state,
-                config=config,
-                stream_mode="updates",
+                initial_state, config=config, stream_mode="updates"
             ):
-                # chunk = {node_name: state_update_dict}
                 for node_name, output in chunk.items():
                     if not isinstance(output, dict):
                         output = {}
-                    # Send node_start first
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
-                        ("node_start", node_name, {}),
-                    )
-                    # Send node_end + any extra events
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
-                        ("node_output", node_name, output),
-                    )
-                    prev_node = node_name
+                    loop.call_soon_threadsafe(queue.put_nowait, ("node_start", node_name, {}))
+                    loop.call_soon_threadsafe(queue.put_nowait, ("node_output", node_name, output))
         except Exception as exc:
             logger.exception("LangGraph stream error")
             loop.call_soon_threadsafe(queue.put_nowait, ("error", str(exc), {}))
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, (_SENTINEL, None, None))
 
-    # Start the stream worker in a thread
     stream_task = asyncio.ensure_future(asyncio.to_thread(_stream_worker))
 
-    # ── Consume queue and push events to WebSocket ────────────────────────
     try:
         while True:
             try:
@@ -205,26 +193,23 @@ async def ask_ws(websocket: WebSocket) -> None:
                 break
 
             if kind == "error":
-                await _send_safe(websocket, AgentEvent(
-                    event="error", data={"message": name}
-                ).model_dump())
+                await _send_safe(
+                    websocket,
+                    ErrorEvent(data=ErrorData(message=name)).model_dump(),
+                )
                 break
 
             if kind == "node_start":
-                if name in ("__start__", "__end__", "summarize_gate", "increment_regen"):
+                if name in ("__start__", "__end__", "summarize_gate", "inc_regen"):
                     continue
-                await _send_safe(websocket, AgentEvent(
-                    event="node_start", node=name, data={}
-                ).model_dump())
+                await _send_safe(websocket, NodeStartEvent(node=name).model_dump())
 
             elif kind == "node_output":
                 if name in ("__start__", "__end__", "summarize_gate"):
                     continue
-                node_end_ev, extra_evs = _node_event(name, data)
-                # Send extra events first (chunk_retrieved)
-                for ev in extra_evs:
+                node_end_ev, extras = _node_event(name, data)
+                for ev in extras:
                     await _send_safe(websocket, ev.model_dump())
-                # Then node_end
                 if node_end_ev is not None:
                     await _send_safe(websocket, node_end_ev.model_dump())
 
@@ -234,11 +219,8 @@ async def ask_ws(websocket: WebSocket) -> None:
         return
     except Exception as exc:
         logger.exception("WS consumer error")
-        await _send_safe(websocket, AgentEvent(
-            event="error", data={"message": str(exc)}
-        ).model_dump())
+        await _send_safe(websocket, ErrorEvent(data=ErrorData(message=str(exc))).model_dump())
 
-    # ── Final "done" event ───────────────────────────────────────────────
     try:
         snapshot = langgraph_app.get_state(config)
         final = snapshot.values if snapshot else {}
@@ -260,9 +242,7 @@ async def ask_ws(websocket: WebSocket) -> None:
         latency_ms=latency,
     )
 
-    await _send_safe(websocket, AgentEvent(
-        event="done", node=None, data=answer_out.model_dump()
-    ).model_dump())
+    await _send_safe(websocket, DoneEvent(data=answer_out).model_dump())
     logger.info("WS done in %.0fms", latency)
 
     try:

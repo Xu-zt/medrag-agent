@@ -30,6 +30,24 @@ ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_FILE = ROOT / "data" / "golden" / "golden_dataset.jsonl"
 OUTPUT_FILE = ROOT / "data" / "eval" / "retrieval_eval.json"
 
+
+def _verify_golden_checksum(jsonl_path: Path) -> None:
+    """Warn if golden dataset does not match its companion .sha256 file."""
+    import hashlib
+    sha_path = jsonl_path.with_suffix(jsonl_path.suffix + ".sha256")
+    if not sha_path.exists():
+        return
+    expected = sha_path.read_text(encoding="utf-8").split()[0]
+    actual = hashlib.sha256(jsonl_path.read_bytes()).hexdigest()
+    if actual != expected:
+        print(
+            f"[WARN] golden_dataset.jsonl checksum mismatch! "
+            f"Expected {expected[:16]}… got {actual[:16]}…\n"
+            "       Dataset may have been modified. Re-run parse_golden_dataset.py to update.",
+            file=sys.stderr,
+        )
+
+
 PIPELINE_LABELS = {
     "p1": "P1 Dense",
     "p2": "P2 Hybrid",
@@ -311,6 +329,7 @@ def main() -> None:
         print(f"[error] {GOLDEN_FILE} not found. Run 07_generate_golden.py first.")
         sys.exit(1)
 
+    _verify_golden_checksum(GOLDEN_FILE)
     n_questions = sum(1 for _ in GOLDEN_FILE.read_text(encoding="utf-8").splitlines())
     print(f"[main] pipelines: {pipelines}")
     print(f"[main] questions: {n_questions}")

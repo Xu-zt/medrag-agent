@@ -25,9 +25,11 @@ def sample_state():
     """Minimal AgentState-compatible dict for testing."""
     return {
         "query": "What is the mechanism of aspirin?",
+        "original_query": "",
         "rewritten_queries": [],
         "retrieved_chunks": [],
         "relevance_score": 0.0,
+        "relevant": False,
         "grade_reason": "No relevant context found.",
         "rewrite_hint": "Try expanding to include COX inhibition.",
         "iterations": 0,
@@ -55,7 +57,7 @@ class TestGraphTopology:
             "__start__",
             "route", "retrieve", "rerank", "grade",
             "rewrite", "generate", "check", "inc_regen",
-            "summarize_gate", "summarize",
+            "append_history", "summarize_gate", "summarize",
         }
         missing = expected - nodes
         assert not missing, f"Missing nodes: {missing}"
@@ -119,6 +121,27 @@ class TestConditionalRouting:
         state = {**sample_state, "faithful": False, "regen_count": 1}
         assert _after_check(state) == "end"   # MAX_REGEN=1 cap
 
+    def test_after_check_smart_gate_skips_regen_with_citations(self, sample_state):
+        from medrag.agent.graph import _after_check
+        from medrag.agent.nodes import REGEN_CONFIDENCE_SKIP
+
+        # first-gen, unfaithful, but has citations + confidence ≥ threshold
+        state = {
+            **sample_state,
+            "faithful": False,
+            "regen_count": 0,
+            "citations": ["PMID:12345", "PMC:doc196"],
+            "confidence": REGEN_CONFIDENCE_SKIP + 0.1,
+        }
+        assert _after_check(state) == "end"   # smart gate: protect good first-gen answer
+
+    def test_after_check_regen_fires_without_citations(self, sample_state):
+        from medrag.agent.graph import _after_check
+
+        # first-gen, unfaithful, no citations → smart gate does not fire
+        state = {**sample_state, "faithful": False, "regen_count": 0, "citations": [], "confidence": 0.9}
+        assert _after_check(state) == "regenerate"
+
 
 # ── Test 3: Node state transformations ────────────────────────────────────────
 
@@ -165,6 +188,39 @@ class TestNodeTransformations:
 
         assert result["iterations"] == 0
         assert result["regen_count"] == 0
+
+    def test_route_query_preserves_original_query(self, sample_state):
+        from medrag.agent.nodes import route_query
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(
+            content='{"type": "factual", "reason": "single fact"}'
+        )
+
+        with patch("medrag.agent.nodes.make_llm_fast", return_value=mock_llm):
+            result = route_query(sample_state)
+
+        assert result["original_query"] == sample_state["query"]
+
+    def test_append_history_records_original_query_and_answer(self, sample_state):
+        from medrag.agent.nodes import append_history
+
+        state = {
+            **sample_state,
+            "original_query": "original question about aspirin",
+            "answer": "Aspirin inhibits COX.",
+        }
+        result = append_history(state)
+        assert len(result["history"]) == 1
+        assert result["history"][0]["query"] == "original question about aspirin"
+        assert result["history"][0]["answer"] == "Aspirin inhibits COX."
+
+    def test_append_history_falls_back_to_query_when_original_missing(self, sample_state):
+        from medrag.agent.nodes import append_history
+
+        state = {**sample_state, "original_query": "", "answer": "Some answer."}
+        result = append_history(state)
+        assert result["history"][0]["query"] == sample_state["query"]
 
     def test_generate_falls_back_on_json_parse_error(self, sample_state):
         from medrag.agent.nodes import generate_answer_node

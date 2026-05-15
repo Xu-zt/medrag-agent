@@ -4,6 +4,8 @@ GET /api/health       — service health check.
 """
 from __future__ import annotations
 
+import os
+
 import httpx
 from fastapi import APIRouter
 
@@ -66,18 +68,26 @@ async def health() -> HealthResponse:
     except Exception:
         pass
 
-    # Check Ollama
-    ollama_status = "disconnected"
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get("http://localhost:11434/api/tags")
-            if r.status_code == 200:
-                ollama_status = "connected"
-    except Exception:
-        pass
+    # Check LLM API (MiMo / OpenAI-compatible)
+    llm_status = "disconnected"
+    base_url = os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE", "")
+    if not base_url:
+        llm_status = "not_configured"
+    else:
+        try:
+            api_key = os.environ.get("OPENAI_API_KEY", "sk-none")
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(
+                    base_url.rstrip("/") + "/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                if r.status_code in (200, 401):
+                    llm_status = "connected"
+        except Exception:
+            pass
 
     return HealthResponse(
         status="ok",
         qdrant=qdrant_status,
-        ollama=ollama_status,
+        llm=llm_status,
     )

@@ -50,6 +50,7 @@ from medrag.agent.nodes import (
     _GRADE_THRESHOLDS,
     REGEN_CONFIDENCE_SKIP,
     HISTORY_SUMMARIZE_EVERY,
+    append_history,
     check_faithfulness,
     generate_answer_node,
     grade_relevance,
@@ -142,16 +143,17 @@ def _build_graph() -> StateGraph:
     g = StateGraph(AgentState)
 
     # Register all nodes
-    g.add_node("route",         route_query)
-    g.add_node("retrieve",      hybrid_retrieve)
-    g.add_node("rerank",        rerank_chunks)
-    g.add_node("grade",         grade_relevance)
-    g.add_node("rewrite",       rewrite_query)
-    g.add_node("generate",      generate_answer_node)
-    g.add_node("check",         check_faithfulness)
-    g.add_node("inc_regen",     increment_regen)
-    g.add_node("summarize_gate", lambda state: {})   # no-op passthrough
-    g.add_node("summarize",     summarize_history)
+    g.add_node("route",           route_query)
+    g.add_node("retrieve",        hybrid_retrieve)
+    g.add_node("rerank",          rerank_chunks)
+    g.add_node("grade",           grade_relevance)
+    g.add_node("rewrite",         rewrite_query)
+    g.add_node("generate",        generate_answer_node)
+    g.add_node("check",           check_faithfulness)
+    g.add_node("inc_regen",       increment_regen)
+    g.add_node("append_history",  append_history)     # persists Q&A to history
+    g.add_node("summarize_gate",  lambda state: {})   # no-op passthrough
+    g.add_node("summarize",       summarize_history)
 
     # Linear backbone: START → route → retrieve → rerank → grade
     g.add_edge(START,       "route")
@@ -172,15 +174,18 @@ def _build_graph() -> StateGraph:
     # After generate: faithfulness check
     g.add_edge("generate", "check")
 
-    # After check: conditional — end or re-generate (via counter increment)
+    # After check: conditional — end (via history append) or re-generate
     g.add_conditional_edges(
         "check",
         _after_check,
-        {"end": "summarize_gate", "regenerate": "inc_regen"},
+        {"end": "append_history", "regenerate": "inc_regen"},
     )
 
     # Increment regen counter, then loop back to generate
     g.add_edge("inc_regen", "generate")
+
+    # Persist the completed Q&A turn, then decide whether to compress history
+    g.add_edge("append_history", "summarize_gate")
 
     # Summarize gate: decide whether to compress history before ending
     g.add_conditional_edges(

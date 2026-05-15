@@ -56,6 +56,15 @@ class TokenBucket:
                 return True
             return False
 
+    def refund(self, tokens: float = 1.0) -> None:
+        """Return tokens to the bucket (thread-safe).
+
+        Called when a downstream check fails after the global bucket was
+        already consumed, so the slot is not wasted.
+        """
+        with self._lock:
+            self._tokens = min(self.capacity, self._tokens + tokens)
+
 
 # ── Global buckets ─────────────────────────────────────────────────────────────
 
@@ -78,8 +87,7 @@ def check_rate_limit(is_generate: bool = False) -> None:
             "Rate limit exceeded: max 30 requests/minute. Please retry later."
         )
     if is_generate and not _GENERATE_BUCKET.consume():
-        # Refund global bucket to avoid double-consuming on generate limit
-        _GLOBAL_BUCKET._tokens = min(_GLOBAL_BUCKET.capacity, _GLOBAL_BUCKET._tokens + 1)
+        _GLOBAL_BUCKET.refund()  # thread-safe: undo the global consume before raising
         logger.warning("[rate_limit] generate bucket exhausted")
         raise RateLimitError(
             "Rate limit exceeded for answer generation: max 10 requests/minute."

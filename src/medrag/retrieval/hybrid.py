@@ -57,10 +57,9 @@ class HybridRetriever:
         self.candidate_k = candidate_k
 
     def retrieve(self, query: str, k: int = 5) -> list[RetrievedChunk]:
-        # Encode both dense and sparse in one forward pass
         enc = self.embedder.encode([query], return_sparse=True)
         dense_vec: list[float] = enc["dense"][0].tolist()
-        sparse_weights: dict = enc["sparse"][0]
+        sparse_weights: dict = (enc.get("sparse") or [{}])[0]
 
         # Dense retrieval → top candidate_k
         dense_result = self.qdrant.query_points(
@@ -71,7 +70,6 @@ class HybridRetriever:
             with_payload=True,
         )
 
-        # Cache payloads keyed by chunk_id so we can reconstruct after RRF
         id_to_point: dict[str, object] = {}
         dense_ranking: list[str] = []
         for p in dense_result.points:
@@ -79,23 +77,27 @@ class HybridRetriever:
             dense_ranking.append(cid)
             id_to_point[cid] = p
 
-        # Sparse retrieval → top candidate_k
-        sparse_result = self.qdrant.query_points(
-            collection_name=self.collection,
-            query=_to_sparse_vec(sparse_weights),
-            using="sparse",
-            limit=self.candidate_k,
-            with_payload=True,
-        )
-        sparse_ranking: list[str] = []
-        for p in sparse_result.points:
-            cid = p.payload["chunk_id"]
-            sparse_ranking.append(cid)
-            if cid not in id_to_point:
-                id_to_point[cid] = p  # sparse-only hit — keep it
+        rankings = [dense_ranking]
+
+        # Sparse retrieval only when sparse weights are available
+        if sparse_weights:
+            sparse_result = self.qdrant.query_points(
+                collection_name=self.collection,
+                query=_to_sparse_vec(sparse_weights),
+                using="sparse",
+                limit=self.candidate_k,
+                with_payload=True,
+            )
+            sparse_ranking: list[str] = []
+            for p in sparse_result.points:
+                cid = p.payload["chunk_id"]
+                sparse_ranking.append(cid)
+                if cid not in id_to_point:
+                    id_to_point[cid] = p
+            rankings.append(sparse_ranking)
 
         # RRF fusion
-        fused = _reciprocal_rank_fusion([dense_ranking, sparse_ranking], k=self.rrf_k)
+        fused = _reciprocal_rank_fusion(rankings, k=self.rrf_k)
 
         # Rebuild top-k RetrievedChunk from cached payloads
         results: list[RetrievedChunk] = []

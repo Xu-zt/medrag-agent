@@ -75,6 +75,25 @@ class TestInjectionGuard:
         assert "<|endoftext|>" not in result
         assert "[EOS]" in result
 
+    def test_escape_llama2_inst_markers_exactly(self):
+        # Regression for BUG-01: [INST]/[/INST] exact Llama2 markers must be escaped
+        from medrag.mcp_server.security.injection_guard import escape_special_tokens
+
+        result = escape_special_tokens("[INST] Answer this question [/INST]")
+        assert "[INST]" not in result
+        assert "[/INST]" not in result
+        assert "[INSTR]" in result
+        assert "[/INSTR]" in result
+
+    def test_escape_does_not_corrupt_medical_substring_inst(self):
+        # Regression for BUG-01: bare "INST" substring must NOT be replaced
+        # e.g. "institute", "instruction" are common in medical text
+        from medrag.mcp_server.security.injection_guard import escape_special_tokens
+
+        text = "The National Institute of Health provides patient instructions."
+        result = escape_special_tokens(text)
+        assert result == text
+
     def test_sanitise_query_returns_escaped_text(self):
         from medrag.mcp_server.security.injection_guard import sanitise_query
 
@@ -143,6 +162,18 @@ class TestRateLimit:
             with patch("medrag.mcp_server.security.rate_limit._GENERATE_BUCKET", empty_gen):
                 with pytest.raises(RateLimitError, match="10 requests/minute"):
                     check_rate_limit(is_generate=True)
+
+    def test_token_bucket_refund_restores_capacity(self):
+        from medrag.mcp_server.security.rate_limit import TokenBucket
+
+        bucket = TokenBucket(capacity=2, refill_rate=0.0)  # no refill
+        bucket.consume()
+        bucket.consume()
+        assert bucket.consume() is False   # empty
+
+        bucket.refund(1.0)
+        assert bucket.consume() is True    # one token restored
+        assert bucket.consume() is False   # empty again
 
     def test_check_rate_limit_no_generate_bucket_for_search(self):
         from medrag.mcp_server.security.rate_limit import (

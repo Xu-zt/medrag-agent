@@ -175,7 +175,7 @@ function ChunkCard({
 
       {/* Score */}
       <div className="mb-2">
-        <ScoreBar score={chunk.score} />
+        <ScoreBar score={chunk.score ?? null} />
       </div>
 
       {/* Title */}
@@ -186,7 +186,7 @@ function ChunkCard({
 
       {/* Text */}
       <p className="text-xs text-slate-600 leading-relaxed line-clamp-4">
-        <HighlightedText text={chunk.text} ranges={chunk.highlight_ranges} />
+        <HighlightedText text={chunk.text} ranges={chunk.highlight_ranges ?? []} />
       </p>
 
       {/* Actions */}

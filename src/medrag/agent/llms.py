@@ -58,62 +58,47 @@ def _mimo_api_key() -> str:
     return key
 
 
+# ── Internal factory ───────────────────────────────────────────────────────────
+
+def _make_llm(thinking: bool):
+    """Shared factory — `thinking` selects tier (fast=OFF / think=ON/Pro)."""
+    temp  = 0.6 if thinking else 0.2
+    model = _MIMO_THINK if thinking else _MIMO_FAST
+
+    if _BACKEND == "ollama":
+        from langchain_ollama import ChatOllama
+        logger.debug("[llm] %s → Ollama %s (reasoning=%s)", "think" if thinking else "fast",
+                     _OLLAMA_MODEL, thinking)
+        return ChatOllama(
+            model=_OLLAMA_MODEL,
+            base_url="http://127.0.0.1:11434",
+            reasoning=thinking,
+            temperature=temp,
+            num_ctx=6144 if thinking else 4096,
+        )
+
+    # Default: mimo
+    from langchain_openai import ChatOpenAI
+    logger.debug("[llm] %s → MiMo %s", "think" if thinking else "fast", model)
+    return ChatOpenAI(
+        model=model,
+        base_url=_mimo_base_url(),
+        api_key=_mimo_api_key(),
+        temperature=temp,
+        max_tokens=4096,
+    )
+
+
 # ── Public factories ───────────────────────────────────────────────────────────
 
 def make_llm_fast():
-    """Low-latency LLM — thinking OFF.
-
-    Used by: route_query, generate_answer_node, summarize_history.
-    """
-    if _BACKEND == "ollama":
-        from langchain_ollama import ChatOllama
-        logger.debug("[llm] fast → Ollama %s (thinking=OFF)", _OLLAMA_MODEL)
-        return ChatOllama(
-            model=_OLLAMA_MODEL,
-            base_url="http://127.0.0.1:11434",
-            reasoning=False,
-            temperature=0.2,
-            num_ctx=4096,
-        )
-
-    # Default: mimo
-    from langchain_openai import ChatOpenAI
-    logger.debug("[llm] fast → MiMo %s", _MIMO_FAST)
-    return ChatOpenAI(
-        model=_MIMO_FAST,
-        base_url=_mimo_base_url(),
-        api_key=_mimo_api_key(),
-        temperature=0.2,
-        max_tokens=4096,
-    )
+    """Low-latency LLM — thinking OFF. Used by: route_query, generate_answer_node, summarize_history."""
+    return _make_llm(False)
 
 
 def make_llm_think():
-    """Deep-reasoning LLM — thinking ON / Pro tier.
-
-    Used by: grade_relevance, rewrite_query, check_faithfulness.
-    """
-    if _BACKEND == "ollama":
-        from langchain_ollama import ChatOllama
-        logger.debug("[llm] think → Ollama %s (thinking=ON)", _OLLAMA_MODEL)
-        return ChatOllama(
-            model=_OLLAMA_MODEL,
-            base_url="http://127.0.0.1:11434",
-            reasoning=True,
-            temperature=0.6,
-            num_ctx=6144,
-        )
-
-    # Default: mimo
-    from langchain_openai import ChatOpenAI
-    logger.debug("[llm] think → MiMo %s", _MIMO_THINK)
-    return ChatOpenAI(
-        model=_MIMO_THINK,
-        base_url=_mimo_base_url(),
-        api_key=_mimo_api_key(),
-        temperature=0.6,
-        max_tokens=4096,
-    )
+    """Deep-reasoning LLM — thinking ON / Pro tier. Used by: grade_relevance, rewrite_query, check_faithfulness."""
+    return _make_llm(True)
 
 
 __all__ = ["make_llm_fast", "make_llm_think"]

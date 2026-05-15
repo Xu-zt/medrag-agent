@@ -56,11 +56,14 @@ class BGEReranker:
             device   = device   if device   is not None else env_device
             use_fp16 = use_fp16 if use_fp16 is not None else env_fp16
 
-        from FlagEmbedding import FlagReranker
-        try:
-            self.model = FlagReranker(model_name, use_fp16=use_fp16, devices=device)
-        except TypeError:
-            self.model = FlagReranker(model_name, use_fp16=use_fp16, device=device)
+        from sentence_transformers import CrossEncoder
+        import torch
+        dtype = torch.float16 if (use_fp16 and device == "cuda") else torch.float32
+        self._model = CrossEncoder(
+            model_name,
+            device=device,
+            automodel_args={"torch_dtype": dtype},
+        )
         self.batch_size = batch_size
         logger.info("[reranker] loaded %s on %s (fp16=%s)", model_name, device, use_fp16)
 
@@ -74,7 +77,7 @@ class BGEReranker:
             return []
 
         pairs = [[query, c.text] for c in chunks]
-        scores = self.model.compute_score(pairs, batch_size=self.batch_size)
+        scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
 
         # Sort descending by reranker score, new objects avoid mutating candidates
         ranked = sorted(zip(scores, chunks), key=lambda x: -x[0])
