@@ -66,14 +66,20 @@ export function ExplorerPage() {
   const [pipeline, setPipeline] = useState<'p2' | 'p3'>('p2')
   const [results, setResults] = useState<SearchResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
 
   async function handleSearch() {
     if (!q.trim()) return
     setLoading(true)
+    setError(null)
     try {
       const data = await fetchSearch(q, k, pipeline)
       setResults(data)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setError(`Search failed: ${msg}`)
+      setResults(null)
     } finally {
       setLoading(false)
     }
@@ -141,6 +147,12 @@ export function ExplorerPage() {
 
         {/* Results */}
         <div className="flex-1 overflow-y-auto p-4">
+          {error && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
           {results && (
             <>
               <div className="flex items-center justify-between mb-3">

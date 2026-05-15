@@ -1,19 +1,29 @@
-"""BGE-M3 dense embedder (Plan B: CPU by default)."""
+"""BGE-M3 dense embedder via sentence_transformers.
+
+Avoids FlagEmbedding entirely — that library's decoder-only reranker
+import chain crashes on Windows (STATUS_ACCESS_VIOLATION / exit code 5).
+sentence_transformers loads the same BAAI/bge-m3 weights and produces
+identical 1024-dim normalized dense vectors.
+
+Sparse (SPLADE) weights are not produced; callers that request
+return_sparse=True get empty dicts, and HybridRetriever falls back
+to dense-only retrieval automatically.
+"""
 
 from __future__ import annotations
 
 from typing import Literal
 
 import numpy as np
-from FlagEmbedding import BGEM3FlagModel
 
 
 class BGEM3Embedder:
     def __init__(self, device: Literal["cuda", "cpu"] = "cpu", use_fp16: bool = False):
-        try:
-            self.model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=use_fp16, devices=device)
-        except TypeError:
-            self.model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=use_fp16, device=device)
+        from sentence_transformers import SentenceTransformer
+        self._model = SentenceTransformer("BAAI/bge-m3", device=device)
+        if use_fp16 and device == "cuda":
+            self._model = self._model.half()
+        self._device = device
 
     def encode(
         self,
@@ -21,17 +31,15 @@ class BGEM3Embedder:
         batch_size: int = 12,
         return_sparse: bool = False,
     ) -> dict:
-        out = self.model.encode(
+        vecs = self._model.encode(
             texts,
             batch_size=batch_size,
-            return_dense=True,
-            return_sparse=return_sparse,
-            return_colbert_vecs=False,
-            max_length=512,
+            normalize_embeddings=True,
+            show_progress_bar=False,
         )
-        result = {"dense": np.array(out["dense_vecs"], dtype=np.float32)}
+        result = {"dense": np.array(vecs, dtype=np.float32)}
         if return_sparse:
-            result["sparse"] = out["lexical_weights"]
+            result["sparse"] = [{} for _ in texts]
         return result
 
 

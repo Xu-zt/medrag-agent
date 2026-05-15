@@ -76,9 +76,21 @@ def _get_retriever():
     from medrag.index.embedder import BGEM3Embedder
     from medrag.retrieval.hybrid import HybridRetriever
 
+    device = os.environ.get("EMBEDDER_DEVICE", "auto")
+    if device == "auto":
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            device = "cpu"
+    logger.info("[retriever] using device=%s", device)
+
+    # Embedder MUST be created before QdrantClient — loading sentence_transformers
+    # after qdrant_client's gRPC layer is initialized causes a segfault on Windows
+    # due to a native library conflict between grpc and torch C++ runtimes.
+    embedder = BGEM3Embedder(device=device)
     qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
     qdrant = QdrantClient(url=qdrant_url, timeout=30)
-    embedder = BGEM3Embedder(device="cpu")
     return HybridRetriever(qdrant, embedder, candidate_k=CANDIDATE_K)
 
 

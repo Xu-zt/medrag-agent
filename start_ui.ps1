@@ -75,4 +75,5 @@ Write-Host "Press Ctrl+C to stop." -ForegroundColor DarkGray
 Write-Host ""
 
 $env:PYTHONPATH = "$Root\src"
-& $py -m uvicorn medrag.api.app:app --reload --port $Port
+$env:TOKENIZERS_PARALLELISM = "false"
+& $py -m uvicorn medrag.api.app:app --host 0.0.0.0 --port $Port
