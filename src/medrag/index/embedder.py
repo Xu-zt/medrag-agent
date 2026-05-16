@@ -1,29 +1,65 @@
-"""BGE-M3 dense embedder via sentence_transformers.
+"""BGE-M3 embedder — dense + sparse via FlagEmbedding M3Embedder.
 
-Avoids FlagEmbedding entirely — that library's decoder-only reranker
-import chain crashes on Windows (STATUS_ACCESS_VIOLATION / exit code 5).
-sentence_transformers loads the same BAAI/bge-m3 weights and produces
-identical 1024-dim normalized dense vectors.
+Import path bypasses FlagEmbedding.__init__ to avoid the decoder-only
+reranker import chain that triggers STATUS_ACCESS_VIOLATION on Windows:
 
-Sparse (SPLADE) weights are not produced; callers that request
-return_sparse=True get empty dicts, and HybridRetriever falls back
-to dense-only retrieval automatically.
+    from FlagEmbedding.inference.embedder.encoder_only.m3 import M3Embedder
+
+This gives access to BGE-M3's native sparse (SPLADE-style lexical weights)
+output, enabling true dense+sparse RRF in HybridRetriever.
+
+sentence_transformers MUST be imported before this module is loaded so that
+PyTorch initialises before qdrant_client's gRPC C++ runtime.  app.py handles
+this at startup.
+
+Device selection:
+  BGEM3Embedder(device="auto")  → cuda if torch.cuda.is_available(), else cpu
+  BGEM3Embedder(device="cuda")  → force GPU
+  BGEM3Embedder(device="cpu")   → force CPU
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
+
+def _resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    try:
+        import torch
+        if torch.cuda.is_available():
+            logger.info("[embedder] CUDA available → gpu")
+            return "cuda"
+    except ImportError:
+        pass
+    logger.info("[embedder] CUDA not available → cpu")
+    return "cpu"
+
 
 class BGEM3Embedder:
-    def __init__(self, device: Literal["cuda", "cpu"] = "cpu", use_fp16: bool = False):
-        from sentence_transformers import SentenceTransformer
-        self._model = SentenceTransformer("BAAI/bge-m3", device=device)
-        if use_fp16 and device == "cuda":
-            self._model = self._model.half()
-        self._device = device
+    def __init__(
+        self,
+        device: Literal["auto", "cuda", "cpu"] = "cpu",
+        use_fp16: bool = False,
+    ):
+        from FlagEmbedding.inference.embedder.encoder_only.m3 import M3Embedder
+
+        resolved = _resolve_device(device)
+        # M3Embedder expects a list of device strings
+        devices = [f"cuda:0" if resolved == "cuda" else "cpu"]
+        self._model = M3Embedder(
+            model_name_or_path="BAAI/bge-m3",
+            use_fp16=(use_fp16 and resolved == "cuda"),
+            devices=devices,
+        )
+        self._device = resolved
+        logger.info("[embedder] BGEM3Embedder loaded on %s (fp16=%s)", resolved, use_fp16)
 
     def encode(
         self,
@@ -31,15 +67,27 @@ class BGEM3Embedder:
         batch_size: int = 12,
         return_sparse: bool = False,
     ) -> dict:
-        vecs = self._model.encode(
+        """Encode texts into dense (and optionally sparse) vectors.
+
+        Returns:
+            dict with keys:
+              "dense"  — np.ndarray of shape (n, 1024), float32, L2-normalised
+              "sparse" — list of {token_id_str: weight} dicts (only if return_sparse=True)
+        """
+        out = self._model.encode(
             texts,
             batch_size=batch_size,
-            normalize_embeddings=True,
-            show_progress_bar=False,
+            return_dense=True,
+            return_sparse=return_sparse,
+            return_colbert_vecs=False,
         )
-        result = {"dense": np.array(vecs, dtype=np.float32)}
+
+        result: dict = {"dense": np.array(out["dense_vecs"], dtype=np.float32)}
+
         if return_sparse:
-            result["sparse"] = [{} for _ in texts]
+            # lexical_weights is a list of {token_str: float} dicts
+            result["sparse"] = out.get("lexical_weights", [{} for _ in texts])
+
         return result
 
 
