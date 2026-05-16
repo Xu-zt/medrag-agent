@@ -135,46 +135,69 @@ def _worker_main(pipeline: str, top_k: int) -> None:
 
     results = []
     for i, item in enumerate(golden, 1):
-        qid = item["id"]
+        qid      = item["id"]
         question = item["question"]
-        source_id = item["source_chunk_id"]
-        print(f"[worker:{pipeline}] {i}/{len(golden)} {qid}", file=sys.stderr, flush=True)
+        # Support both v2 (gold_chunk_ids list) and v1 (source_chunk_id single)
+        gold_ids: list[str] = (
+            item.get("gold_chunk_ids")
+            or ([item["source_chunk_id"]] if item.get("source_chunk_id") else [])
+        )
+        print(f"[worker:{pipeline}] {i}/{len(golden)} {qid} ({len(gold_ids)} gold chunks)",
+              file=sys.stderr, flush=True)
 
         t0 = time.perf_counter()
         try:
             chunks = fn(question, top_k)
             latency = time.perf_counter() - t0
             retrieved_ids = [c.payload.get("chunk_id", "") for c in chunks]
-            rank = None
-            for j, cid in enumerate(retrieved_ids, 1):
-                if cid == source_id:
-                    rank = j
-                    break
+
+            # Find rank for each gold chunk; rank = position in retrieved list (1-based)
+            per_chunk_ranks: dict[str, int | None] = {}
+            for gid in gold_ids:
+                per_chunk_ranks[gid] = None
+                for j, rid in enumerate(retrieved_ids, 1):
+                    if rid == gid:
+                        per_chunk_ranks[gid] = j
+                        break
+
+            # "best rank" = lowest rank among found gold chunks (used by MRR/Recall@k)
+            found_ranks = [r for r in per_chunk_ranks.values() if r is not None]
+            best_rank   = min(found_ranks) if found_ranks else None
+            all_found   = len(found_ranks) == len(gold_ids)
+
             results.append({
-                "id": qid,
-                "question": question,
-                "source_chunk_id": source_id,
-                "category": item["category"],
-                "difficulty": item["difficulty"],
-                "pipeline": pipeline,
-                "rank": rank,          # None = not found in top_k
-                "latency_s": round(latency, 3),
-                "retrieved_ids": retrieved_ids[:20],
+                "id":              qid,
+                "question":        question,
+                "gold_chunk_ids":  gold_ids,
+                "source_chunk_id": gold_ids[0] if gold_ids else "",   # v1 compat
+                "category":        item.get("category", ""),
+                "difficulty":      item.get("difficulty", ""),
+                "difficulty_band": item.get("difficulty_band", ""),
+                "pipeline":        pipeline,
+                "rank":            best_rank,     # best rank (for Recall@k / MRR compat)
+                "per_chunk_ranks": per_chunk_ranks,
+                "all_found":       all_found,
+                "latency_s":       round(latency, 3),
+                "retrieved_ids":   retrieved_ids[:20],
             })
         except Exception as exc:
             latency = time.perf_counter() - t0
             print(f"[worker:{pipeline}] ERROR {qid}: {exc}", file=sys.stderr, flush=True)
             results.append({
-                "id": qid,
-                "question": question,
-                "source_chunk_id": source_id,
-                "category": item["category"],
-                "difficulty": item["difficulty"],
-                "pipeline": pipeline,
-                "rank": None,
-                "latency_s": round(latency, 3),
-                "error": str(exc),
-                "retrieved_ids": [],
+                "id":              qid,
+                "question":        question,
+                "gold_chunk_ids":  gold_ids,
+                "source_chunk_id": gold_ids[0] if gold_ids else "",
+                "category":        item.get("category", ""),
+                "difficulty":      item.get("difficulty", ""),
+                "difficulty_band": item.get("difficulty_band", ""),
+                "pipeline":        pipeline,
+                "rank":            None,
+                "per_chunk_ranks": {gid: None for gid in gold_ids},
+                "all_found":       False,
+                "latency_s":       round(latency, 3),
+                "error":           str(exc),
+                "retrieved_ids":   [],
             })
 
     print(json.dumps(results, ensure_ascii=False))
@@ -226,22 +249,39 @@ def _run_pipeline_subprocess(pipeline: str, top_k: int, python_exe: str, src_roo
 # ---------------------------------------------------------------------------
 
 def compute_metrics(results: list[dict], k_values: list[int]) -> dict:
-    """Compute Recall@K and MRR@max_k for a list of result records."""
+    """Compute Recall@K, MRR@max_k, and AllFound@K for a list of result records.
+
+    rank = best rank among gold chunks (any gold chunk hit counts for Recall/MRR).
+    AllFound@k = fraction of questions where ALL gold chunks appear in top-k.
+    """
     max_k = max(k_values)
     n = len(results)
     if n == 0:
         return {}
 
-    recall_at_k = {}
+    recall_at_k  = {}
+    all_found_at_k = {}
     for k in k_values:
-        hits = sum(1 for r in results if r.get("rank") is not None and r["rank"] <= k)
-        recall_at_k[f"Recall@{k}"] = round(hits / n, 4)
+        hits      = sum(1 for r in results if r.get("rank") is not None and r["rank"] <= k)
+        all_found = sum(
+            1 for r in results
+            if r.get("per_chunk_ranks") and all(
+                v is not None and v <= k for v in r["per_chunk_ranks"].values()
+            )
+        )
+        recall_at_k[f"Recall@{k}"]   = round(hits / n, 4)
+        all_found_at_k[f"AllFound@{k}"] = round(all_found / n, 4)
 
-    mrr = sum(1.0 / r["rank"] for r in results if r.get("rank") is not None and r["rank"] <= max_k)
+    mrr = sum(
+        1.0 / r["rank"]
+        for r in results
+        if r.get("rank") is not None and r["rank"] <= max_k
+    )
     avg_latency = [r["latency_s"] for r in results if "latency_s" in r and not r.get("error")]
 
     return {
         **recall_at_k,
+        **all_found_at_k,
         f"MRR@{max_k}": round(mrr / n, 4),
         "Avg_latency_s": round(sum(avg_latency) / len(avg_latency), 3) if avg_latency else 0,
         "n": n,
@@ -249,10 +289,10 @@ def compute_metrics(results: list[dict], k_values: list[int]) -> dict:
 
 
 def compute_breakdown(results: list[dict], k_values: list[int], by: str) -> dict[str, dict]:
-    """Compute metrics grouped by category or difficulty."""
+    """Compute metrics grouped by category, difficulty, or difficulty_band."""
     groups: dict[str, list] = {}
     for r in results:
-        key = r.get(by, "Unknown")
+        key = r.get(by, "Unknown") or "Unknown"
         groups.setdefault(key, []).append(r)
     return {k: compute_metrics(v, k_values) for k, v in sorted(groups.items())}
 
@@ -352,14 +392,16 @@ def main() -> None:
 
     # Compute per-pipeline metrics
     all_metrics: dict[str, dict] = {}
-    category_breakdown: dict[str, dict] = {}
+    category_breakdown:   dict[str, dict] = {}
     difficulty_breakdown: dict[str, dict] = {}
+    band_breakdown:       dict[str, dict] = {}
 
     for p in pipelines:
         p_results = [r for r in all_results if r.get("pipeline") == p]
-        all_metrics[p] = compute_metrics(p_results, k_values)
-        category_breakdown[p] = compute_breakdown(p_results, k_values, "category")
+        all_metrics[p]           = compute_metrics(p_results, k_values)
+        category_breakdown[p]   = compute_breakdown(p_results, k_values, "category")
         difficulty_breakdown[p] = compute_breakdown(p_results, k_values, "difficulty")
+        band_breakdown[p]       = compute_breakdown(p_results, k_values, "difficulty_band")
 
     # Save JSON
     out_path = Path(args.output)
@@ -370,8 +412,9 @@ def main() -> None:
         "n_questions": n_questions,
         "pipelines": pipelines,
         "summary": all_metrics,
-        "category_breakdown": category_breakdown,
+        "category_breakdown":   category_breakdown,
         "difficulty_breakdown": difficulty_breakdown,
+        "band_breakdown":       band_breakdown,
         "results": all_results,
     }
     with out_path.open("w", encoding="utf-8") as f:
@@ -379,8 +422,9 @@ def main() -> None:
     print(f"\n[saved] {out_path}")
 
     print_summary_table(all_metrics, k_values, pipelines)
-    print_breakdown_table(category_breakdown, k_values, pipelines, "category")
+    print_breakdown_table(category_breakdown,   k_values, pipelines, "category")
     print_breakdown_table(difficulty_breakdown, k_values, pipelines, "difficulty")
+    print_breakdown_table(band_breakdown,       k_values, pipelines, "difficulty_band")
 
 
 if __name__ == "__main__":
