@@ -1,8 +1,8 @@
 # VeritasMed 评估报告
 
 > 版本: v1.2 · 日期: 2026-05-09  
-> 评测对象: MedRAG-Agent (P3 Static → P4-Agentic → Stage 2 Smart Routing)  
-> 语料: 44,768 chunks (1,975 PubMed + 42,793 PMC)
+> 评测对象: VeritasMed (P3 Static → P4-Agentic v1 → v4 smart-gate → Stage 2 Smart Routing)  
+> 语料: 44,768 chunks (1,975 PubMed + 42,793 PMC，评估时的实际索引量)
 
 ---
 

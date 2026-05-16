@@ -6,8 +6,12 @@ Backend selection via environment variable LLM_BACKEND (default: mimo):
   LLM_BACKEND=ollama  → ChatOllama pointing at local Qwen3-8B (fallback)
 
 Two tiers per backend:
-  make_llm_fast()   → router, generate, summarize nodes (thinking OFF)
-  make_llm_think()  → grade, rewrite, check nodes (thinking ON / Pro tier)
+  make_llm_fast()   → route, generate, summarize nodes (mimo-v2.5, thinking disabled)
+  make_llm_think()  → grade, rewrite, check nodes (mimo-v2.5-pro, thinking disabled)
+
+Note: MiMo's internal reasoning is disabled on both tiers via extra_body.
+The "think" tier still uses the heavier Pro model for better accuracy.
+Enabling reasoning (removing thinking.type=disabled) adds 15-27s per call.
 
 MiMo env vars (read from .env):
   OPENAI_BASE_URL   — MiMo API base URL
@@ -80,12 +84,20 @@ def _make_llm(thinking: bool):
     # Default: mimo
     from langchain_openai import ChatOpenAI
     logger.debug("[llm] %s → MiMo %s", "think" if thinking else "fast", model)
+
+    # MiMo models always reason internally unless explicitly disabled.
+    # With thinking enabled and max_tokens=4096, the model burns 1000-5000+
+    # reasoning tokens before producing content → 15-27 s for grade/check calls.
+    # budget_tokens has no effect on this API; the only working control is
+    # {"type": "disabled"}.  Grade/check quality stays high using the pro model
+    # (mimo-v2.5-pro) even without explicit CoT; the fast model uses v2.5.
     return ChatOpenAI(
         model=model,
         base_url=_mimo_base_url(),
         api_key=_mimo_api_key(),
         temperature=temp,
-        max_tokens=4096,
+        max_tokens=4096 if thinking else 1024,
+        extra_body={"thinking": {"type": "disabled"}},
     )
 
 
@@ -97,7 +109,7 @@ def make_llm_fast():
 
 
 def make_llm_think():
-    """Deep-reasoning LLM — thinking ON / Pro tier. Used by: grade_relevance, rewrite_query, check_faithfulness."""
+    """Pro-tier LLM (mimo-v2.5-pro, thinking disabled). Used by: grade_relevance, rewrite_query, check_faithfulness."""
     return _make_llm(True)
 
 

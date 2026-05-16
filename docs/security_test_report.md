@@ -68,8 +68,11 @@ LangGraph 推理环路
 | `<\|im_start\|>` | `[START]` |
 | `<\|im_end\|>` | `[END]` |
 | `<\|system\|>` | `[SYS]` |
+| `<\|user\|>` | `[USR]` |
+| `<\|assistant\|>` | `[AST]` |
 | `###` | `##` |
-| `INST` | `INSTR` |
+| `[INST]` | `[INSTR]` |
+| `[/INST]` | `[/INSTR]` |
 
 **机制 C — XML 边界标签隔离**（`wrap_document`）
 

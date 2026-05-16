@@ -8,15 +8,18 @@ Three-phase design:
 Run with --phase=embed, --phase=sparse, --phase=index, or --phase=all (default).
 Existing cache files are skipped automatically in --phase=all mode.
 """
-# Windows + CUDA: preload pyarrow before torch to avoid access violation (0xC0000005)
-import pyarrow.dataset  # noqa: F401
+# Windows + CUDA: import sentence_transformers before qdrant_client so PyTorch
+# loads before the gRPC C++ runtime, avoiding STATUS_ACCESS_VIOLATION (exit 5).
+import sentence_transformers  # noqa: F401
 
 import argparse
 import json
 from pathlib import Path
 
 import numpy as np
-from FlagEmbedding import BGEM3FlagModel
+# Bypass FlagEmbedding.__init__ — the decoder-only reranker in that init chain
+# crashes on Windows.  The encoder-only M3Embedder sub-module is safe to import.
+from FlagEmbedding.inference.embedder.encoder_only.m3 import M3Embedder
 from qdrant_client import QdrantClient
 
 from medrag.ingest.chunker import chunk_pubmed_record, chunk_pmc_record
@@ -54,7 +57,7 @@ def load_chunks() -> list:
 def phase_embed(chunks) -> np.ndarray:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     print("[embed] loading BGE-M3 on cuda...", flush=True)
-    model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True, device="cuda")
+    model = M3Embedder("BAAI/bge-m3", use_fp16=True, devices=["cuda:0"])
     print("[embed] model loaded", flush=True)
     texts = [c.text for c in chunks]
     print(f"[embed] encoding {len(texts)} texts ...", flush=True)
@@ -79,9 +82,8 @@ def phase_embed(chunks) -> np.ndarray:
 def phase_sparse(chunks) -> list[dict]:
     """Encode sparse (lexical) weights for all chunks and save to sparse.jsonl."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    print("[sparse] loading BGE-M3 (fp16) and moving to cuda...", flush=True)
-    model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
-    model.model = model.model.to("cuda")  # BGEM3FlagModel ignores device= arg; move manually
+    print("[sparse] loading BGE-M3 (fp16) on cuda...", flush=True)
+    model = M3Embedder("BAAI/bge-m3", use_fp16=True, devices=["cuda:0"])
     print("[sparse] model loaded on cuda", flush=True)
 
     texts = [c.text for c in chunks]
