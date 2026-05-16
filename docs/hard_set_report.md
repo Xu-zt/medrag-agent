@@ -1,7 +1,9 @@
-# VeritasMed Hard Eval Set — Stage 1 Report
+# VeritasMed Hard Eval Set — Stage 1 构造与基线报告
 
 > 版本: v1.1 · 日期: 2026-05-08  
-> 目的：量化 grade→rewrite→regen 环路在困难查询上的 Agentic 增益
+> 目的：描述 Hard Set 构造方法，并记录 P4-Agentic v1（优化前基线）在困难查询上的表现
+>
+> **后续优化（v4 smart-gate）的完整结果见 [`docs/evaluation_report.md`](evaluation_report.md) §3.2 与 §8.4**
 
 ---
 
@@ -44,10 +46,11 @@ Hard Set SHA-256（Python canonical）：
 
 ---
 
-## 2. Agentic 评测结果（Stage 1.8）
+## 2. Agentic 评测结果（P4-Agentic v1 基线）
 
 > 评测日期：2026-05-08  
-> 评测命令见第 3 节。评判模型：`mimo-v2.5-pro`
+> 评测命令见第 3 节。评判模型：`mimo-v2.5-pro`  
+> ⚠️ 这是 P4-Agentic **v1（优化前基线）** 的结果。v4 smart-gate 版本（Composite=0.818）见 [`docs/evaluation_report.md`](evaluation_report.md)。
 
 ### 2.1 P3 Static vs P4-Agentic（Hard Set，39 题）
 
@@ -122,13 +125,21 @@ python scripts/11_eval_agent.py \
 
 ### 4.3 建议后续优化
 
-| 优先级 | 方向 | 具体措施 |
-|--------|------|---------|
-| ★★★ | rewrite 质量 | 在 rewrite_query 节点加入"保留原始问题意图"约束；限制 max_rewrites=1 避免过度发散 |
-| ★★★ | faithfulness regen 条件 | 将 faithful 阈值从二值改为 0.5 连续分，避免低质 regen 覆盖原始好答案 |
-| ★★ | Type A 语料补充 | 在候选筛选阶段加入"患者/临床/治疗"关键词过滤，构造更多有效跨文档推理对 |
-| ★★ | GPU 加速 | RERANKER_DEVICE=cuda 可将 rerank 延迟从 ~15s 降至 ~0.2s，P50 latency 预计降至 <30s |
-| ★ | 答案长度控制 | 部分 P4 答案过短（e.g. relevance=0.0），可在 generate 节点增加最小 token 要求 |
+| 优先级 | 方向 | 具体措施 | 实施状态 |
+|--------|------|---------|---------|
+| ★★★ | rewrite 质量 | REWRITE_SYSTEM 加入"保留原始问题意图"约束；max_rewrites=1 | ✅ v4 已实施 |
+| ★★★ | faithfulness regen 门控 | confidence + citations 作为智能 regen 门控，避免 false positive | ✅ v4 已实施 |
+| ★★ | Type A 语料补充 | 在候选筛选阶段加入"患者/临床/治疗"关键词过滤 | ○ 待实施 |
+| ★★ | GPU 加速 | RERANKER_DEVICE=cuda，rerank 延迟从 ~15s 降至 ~0.2s | ○ 待验证 |
+| ★ | 答案长度控制 | generate 节点增加最小 token 要求 | ○ 待实施 |
+
+v4 优化结果摘要（完整数据见 [`docs/evaluation_report.md`](evaluation_report.md)）：
+
+| 指标 | v1 基线 | v4 smart-gate | Δ | P3 基线 |
+|------|---------|--------------|---|---------|
+| Composite | 0.685 | **0.818** | +0.133 | 0.748 |
+| Faithfulness | 0.756 | **0.951** | +0.195 | 0.772 |
+| Insufficient evidence | 8/39 | **1/39** | −7 | — |
 
 ---
 

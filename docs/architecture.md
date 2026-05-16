@@ -64,31 +64,37 @@ Two access paths:
 
 ## 2. LangGraph Node Reference
 
-| Node | LLM | Thinking | Responsibility |
-|------|-----|----------|----------------|
-| `route` | `llm_fast` | OFF | Classify query: factual / synthesis / multihop |
-| `retrieve` | — | — | Hybrid RRF retrieval, returns top-20 candidates |
-| `rerank` | — | — | BGE cross-encoder → shrink to top-5 |
-| `grade` | `llm_think` | ON | Score chunk relevance 0–1; set `rewrite_hint` |
-| `rewrite` | `llm_think` | ON | Rewrite failed query (MeSH synonyms, sub-questions) |
-| `generate` | `llm_fast` | OFF | Structured JSON answer: {answer, citations, confidence} |
-| `check` | `llm_think` | ON | Binary faithfulness audit |
-| `inc_regen` | — | — | Increment `regen_count` before re-generation |
-| `append_history` | — | — | Persist completed Q&A turn to `state["history"]` |
-| `summarize_gate` | — | — | Decide whether to compress history |
-| `summarize` | `llm_fast` | OFF | Compress history to ≤200-word rolling summary |
+| Node | Python function | LLM | Thinking | Responsibility |
+|------|----------------|-----|----------|----------------|
+| `route` | `route_query` | `llm_fast` | OFF | Classify query: factual / synthesis / multihop |
+| `retrieve` | `hybrid_retrieve` | — | — | Dense RRF retrieval, returns top-20 candidates |
+| `rerank` | `rerank_chunks` | — | — | BGE cross-encoder → shrink to top-5 |
+| `grade` | `grade_relevance` | `llm_think` | ON | Score chunk relevance 0–1; set `rewrite_hint` |
+| `rewrite` | `rewrite_query` | `llm_think` | ON | Rewrite failed query (MeSH synonyms, sub-questions) |
+| `generate` | `generate_answer_node` | `llm_fast` | OFF | Structured JSON answer: {answer, citations, confidence} |
+| `check` | `check_faithfulness` | `llm_think` | ON | Binary faithfulness audit with smart gate |
+| `inc_regen` | `increment_regen` | — | — | Increment `regen_count` before re-generation |
+| `append_history` | `append_history` | — | — | Persist completed Q&A turn to `state["history"]` |
+| `summarize_gate` | lambda passthrough | — | — | Decide whether to compress history |
+| `summarize` | `summarize_history` | `llm_fast` | OFF | Compress history to ≤200-word rolling summary |
 
 ### 2.1 Dual-LLM Strategy
 
 ```
-llm_fast  (mimo-v2.5, thinking=OFF, temp=0.2)
+llm_fast  (mimo-v2.5, thinking=disabled, temp=0.2)
   → route, generate, summarize
-  → Low latency (~0.5–2 s), deterministic output
+  → ~1–2 s per call, deterministic output
 
-llm_think (mimo-v2.5-pro, thinking=ON, temp=0.6)
+llm_think (mimo-v2.5-pro, thinking=disabled, temp=0.6)
   → grade, rewrite, check
-  → Deep reasoning (+1–3 s), better faithfulness auditing
+  → ~2–4 s per call, higher accuracy than v2.5
 ```
+
+Both tiers pass `extra_body={"thinking": {"type": "disabled"}}`. MiMo reasoning
+models default to internal CoT which burns 1000–5000 reasoning tokens before
+producing content (adds 15–27 s per call). Disabling it is required for
+practical latency. The "think" label now refers to the Pro model tier, not
+literal chain-of-thought.
 
 Configured via env vars `MIMO_MODEL_FAST` and `MIMO_MODEL_THINK` (or `LLM_BACKEND=ollama`).
 
@@ -108,7 +114,7 @@ After check:
   unfaithful, regen_count ≥ MAX_REGEN                →  append_history → END
 ```
 
-Constants (`nodes.py`): `MAX_REWRITES=1`, `MAX_REGEN=1`, `GRADE_THRESHOLD=0.6`, `REGEN_CONFIDENCE_SKIP=0.3`, `CANDIDATE_K=20`, `TOP_K=5`.
+Constants (`nodes.py`): `MAX_REWRITES=1`, `MAX_REGEN=1`, `GRADE_THRESHOLD=0.6` (base; overridden per query type), `REGEN_CONFIDENCE_SKIP=0.3`, `CANDIDATE_K=20`, `TOP_K=5`, `HISTORY_SUMMARIZE_EVERY=10`.
 
 ---
 
@@ -134,15 +140,16 @@ L2 — Rolling Summarisation
 
 ### 4.1 Embedding — sentence_transformers
 
-Both the embedder and reranker use `sentence_transformers` rather than `FlagEmbedding`. FlagEmbedding's decoder-only reranker triggers a `STATUS_ACCESS_VIOLATION` crash on Windows (access violation in `modeling_minicpm_reranker.py`).
+The embedder uses `FlagEmbedding.inference.embedder.encoder_only.m3.M3Embedder` (submodule import, bypasses `FlagEmbedding.__init__`). The reranker uses `sentence_transformers.CrossEncoder`. Importing the FlagEmbedding top-level package (`from FlagEmbedding import ...`) triggers a `STATUS_ACCESS_VIOLATION` crash on Windows because `__init__` pulls in the decoder-only reranker (`modeling_minicpm_reranker.py`) whose C++ runtime conflicts with qdrant_client's gRPC runtime. The fix is to import only the encoder-only submodule directly.
 
 ```python
-# embedder.py
-SentenceTransformer("BAAI/bge-m3", device=device)
-# Returns dense 1024-d float32 normalized vectors.
-# Sparse vectors (SPLADE-style) are NOT produced — dense-only RRF.
+# embedder.py — uses FlagEmbedding submodule (not top-level package)
+from FlagEmbedding.inference.embedder.encoder_only.m3 import M3Embedder
+M3Embedder("BAAI/bge-m3", use_fp16=False, devices=["cpu"])
+# Returns dense 1024-d float32 normalised vectors + sparse lexical weights.
+# sparse keys are string token IDs castable to int for Qdrant SparseVector.
 
-# reranker.py
+# reranker.py — sentence_transformers CrossEncoder (no FlagEmbedding dependency)
 CrossEncoder("BAAI/bge-reranker-v2-m3", device=device)
 # fp16 on CUDA, float32 on CPU
 ```
@@ -156,14 +163,16 @@ Device is auto-detected (`EMBEDDER_DEVICE` / `RERANKER_DEVICE` env vars, default
 ```
 Query
   │
-  └──► BGE-M3 encode (dense 1024-d)
+  └──► BGE-M3 encode (dense 1024-d, + sparse weights if available)
          │
-         ├──► Qdrant dense search  →  top-20 by cosine similarity
+         ├──► Qdrant dense search   →  top-20 by cosine similarity
          │
-         └──► RRF fusion (k=60)   →  top-20 fused candidates
+         ├──► Qdrant sparse search  →  top-20 (skipped when sparse_weights is empty)
+         │
+         └──► RRF fusion (k=60)    →  top-20 fused candidates
 ```
 
-(Sparse search is skipped when `sentence_transformers` returns empty sparse weights.)
+`HybridRetriever` calls `embedder.encode(return_sparse=True)` and checks `if sparse_weights:` before issuing the sparse Qdrant query. With the current `BGEM3Embedder` (sentence_transformers backend), sparse weights are always empty, so sparse search is skipped and the result is effectively dense-only RRF. If the embedder is replaced with one that produces sparse vectors, sparse search activates automatically with no changes to `hybrid.py`.
 
 ### 4.3 P3 Hybrid + Reranker
 
@@ -223,12 +232,13 @@ Answer arrives once in the `done` event (no incremental token streaming).
 | Metric | Value |
 |--------|-------|
 | Sources | PubMed abstracts + PMC full-text (Open Access) |
-| Total chunks | ~186,000 |
+| Total chunks (evaluation run) | 44,768 (1,975 PubMed + 42,793 PMC) |
 | Avg chunk length | ~300 tokens |
 | Chunk overlap | 64 tokens |
 | Embedding model | BAAI/bge-m3 (dense 1024-d, sentence_transformers) |
 | Reranker | BAAI/bge-reranker-v2-m3 (cross-encoder) |
 | Vector DB | Qdrant (single-node, localhost:6333) |
+| Sparse vectors | Not produced by current embedder — sparse Qdrant search skipped at runtime |
 
 ---
 
@@ -238,17 +248,28 @@ Answer arrives once in the `done` event (no incremental token streaming).
 medrag-agent/
 ├── src/medrag/
 │   ├── agent/
-│   │   ├── graph.py        # StateGraph + SqliteSaver
-│   │   ├── nodes.py        # 10 node functions
+│   │   ├── graph.py        # StateGraph + SqliteSaver (graph assembly)
+│   │   ├── nodes.py        # 11 node functions
 │   │   ├── state.py        # AgentState TypedDict
 │   │   ├── prompts.py      # LLM prompt templates
-│   │   ├── llms.py         # Dual-LLM factory
-│   │   └── utils.py        # strip_thinking()
+│   │   ├── llms.py         # Dual-LLM factory (mimo/ollama backends)
+│   │   ├── utils.py        # strip_thinking(), build_answer_from_claims()
+│   │   └── generator.py    # Week-1 baseline: single-shot answer (no agent loop)
+│   ├── api/
+│   │   ├── app.py          # FastAPI entry point (CORS, import order)
+│   │   ├── models.py       # Pydantic models — single source of truth
+│   │   ├── _helpers.py     # Shared utilities
+│   │   └── routes/         # ask, search, document, chunk, history, corpus
 │   ├── index/
-│   │   ├── embedder.py     # BGEM3Embedder (sentence_transformers)
-│   │   └── indexer.py      # Qdrant upsert pipeline
+│   │   ├── embedder.py     # BGEM3Embedder (sentence_transformers, dense 1024-d)
+│   │   ├── indexer.py      # Qdrant upsert pipeline
+│   │   └── qdrant_setup.py # Collection initialisation
+│   ├── ingest/
+│   │   ├── pubmed.py       # PubMed abstract fetcher
+│   │   ├── pmc.py          # PMC OA full-text fetcher
+│   │   └── chunker.py      # Sliding-window chunker (64-token overlap)
 │   ├── retrieval/
-│   │   ├── hybrid.py       # HybridRetriever (RRF fusion)
+│   │   ├── hybrid.py       # HybridRetriever (dense-only RRF)
 │   │   ├── reranker.py     # BGEReranker (CrossEncoder)
 │   │   ├── retriever.py    # DenseRetriever + RetrievedChunk
 │   │   ├── hyde.py         # HyDERetriever
@@ -264,9 +285,9 @@ medrag-agent/
 │   ├── .env.local          # VITE_API_URL=http://localhost:8000 (gitignored)
 │   └── vite.config.ts      # No proxy — direct CORS to :8000
 ├── data/
-│   ├── golden/             # 50-question evaluation dataset
+│   ├── golden/             # Evaluation datasets (standard + hard set)
 │   ├── eval/               # Evaluation outputs
-│   └── checkpoints/        # LangGraph SqliteSaver state
+│   └── checkpoints/        # LangGraph SqliteSaver state (runtime)
 ├── scripts/                # Numbered pipeline scripts (01–14)
 ├── openapi.json            # FastAPI OpenAPI schema
 ├── .env.example            # Required environment variables
