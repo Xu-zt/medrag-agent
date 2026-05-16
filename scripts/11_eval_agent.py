@@ -83,16 +83,18 @@ Output ONLY valid JSON: {{"score": 0.0-1.0, "issues": "brief note or none"}}"""
 
 CORRECTNESS_SYS = (
     "You are comparing a generated answer to a golden reference answer for a medical RAG benchmark. "
-    "Score how much correct information the generated answer conveys relative to the reference."
+    "Score how much correct information the generated answer conveys relative to the reference. "
+    "Focus on whether the key facts and claims in the golden answer are present and accurate."
 )
 CORRECTNESS_USR = """\
 Question: {question}
-Golden answer: {golden}
+Golden answer (complete reference): {golden}
 Generated answer: {generated}
 
-Score correctness (0.0-1.0): overlap of correct information between generated and golden answer.
+Score correctness (0.0-1.0): fraction of key facts from the golden answer that are present
+and correct in the generated answer.
 1.0 = all key facts present and correct, 0.0 = mostly wrong or missing.
-Output ONLY valid JSON: {{"score": 0.0-1.0, "issues": "brief note or none"}}"""
+Output ONLY valid JSON: {{"score": 0.0-1.0, "issues": "which key facts are missing or wrong"}}"""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -286,43 +288,81 @@ def main() -> None:
             rel_score, rel_issues = 0.0, "api_error"
         time.sleep(args.sleep)
 
-        # 4. Judge: correctness
+        # 4. Judge: correctness (use full reference answer, not truncated)
         try:
             raw = _chat(client, args.model, CORRECTNESS_SYS,
                         CORRECTNESS_USR.format(
                             question=question,
-                            golden=golden_answer[:600],
-                            generated=generated[:600]))
+                            golden=golden_answer[:2000],    # was [:600] — now full answer
+                            generated=generated[:2000]))    # was [:600]
             corr_score, corr_issues = _parse_score(raw)
         except Exception:
             corr_score, corr_issues = 0.0, "api_error"
         time.sleep(args.sleep)
 
+        # 5. Citation precision/recall vs gold_chunk_ids (v2 datasets)
+        gold_chunk_ids: list[str] = item.get("gold_chunk_ids", [])
+        if not gold_chunk_ids and item.get("source_chunk_id"):
+            gold_chunk_ids = [item["source_chunk_id"]]
+
+        # Agent citations are e.g. ["PMID:12345", "PMC:doc10"] — match against chunk_id prefixes
+        cited_set: set[str] = set()
+        for c in citations:
+            # citations may be strings like "PMID:12345" or "PMC:doc10:3"
+            cited_set.add(str(c).strip())
+
+        def _normalize(cid: str) -> str:
+            # Extract the base citation key (e.g. "pubmed:41962469:0" → "PMID:41962469")
+            parts = cid.split(":")
+            if parts[0] == "pubmed":
+                return f"PMID:{parts[1]}" if len(parts) > 1 else cid
+            if parts[0] == "pmc":
+                return f"PMC:{parts[1]}" if len(parts) > 1 else cid
+            return cid
+
+        gold_normalized = {_normalize(g) for g in gold_chunk_ids}
+        cited_normalized = {_normalize(c) for c in cited_set}
+
+        if gold_normalized:
+            tp = len(gold_normalized & cited_normalized)
+            cite_precision = round(tp / len(cited_normalized), 4) if cited_normalized else 0.0
+            cite_recall    = round(tp / len(gold_normalized), 4)
+        else:
+            cite_precision = cite_recall = None   # v1 dataset without gold_chunk_ids
+
         composite = round((faith_score + rel_score + corr_score) / 3, 4)
         print(f"  judge: faith={faith_score:.2f} rel={rel_score:.2f}"
               f" corr={corr_score:.2f} -> comp={composite:.2f}", flush=True)
+        if cite_recall is not None:
+            print(f"  citation: prec={cite_precision:.2f} rec={cite_recall:.2f} "
+                  f"(gold={sorted(gold_normalized)} cited={sorted(cited_normalized)})",
+                  flush=True)
 
         rec = {
-            "id": qid,
-            "category": item["category"],
-            "difficulty": item["difficulty"],
-            "question": question,
-            "golden_answer": golden_answer,
+            "id":               qid,
+            "category":         item.get("category", ""),
+            "difficulty":       item.get("difficulty", ""),
+            "difficulty_band":  item.get("difficulty_band", ""),
+            "question":         question,
+            "golden_answer":    golden_answer,
             "generated_answer": generated,
-            "pipeline": "p4-agentic",
-            "citations": citations,
-            "confidence": confidence,
-            "agent_faithful": agent_faith,
-            "agent_latency_s": round(agent_latency, 2),
-            "iterations": iterations,
-            "regen_count": regen_count,
-            "faithfulness": faith_score,
-            "faithfulness_issues": faith_issues,
-            "relevance": rel_score,
-            "relevance_issues": rel_issues,
-            "correctness": corr_score,
-            "correctness_issues": corr_issues,
-            "composite": composite,
+            "pipeline":         "p4-agentic",
+            "citations":            citations,
+            "gold_chunk_ids":       gold_chunk_ids,
+            "citation_precision":   cite_precision,
+            "citation_recall":      cite_recall,
+            "confidence":       confidence,
+            "agent_faithful":   agent_faith,
+            "agent_latency_s":  round(agent_latency, 2),
+            "iterations":       iterations,
+            "regen_count":      regen_count,
+            "faithfulness":         faith_score,
+            "faithfulness_issues":  faith_issues,
+            "relevance":            rel_score,
+            "relevance_issues":     rel_issues,
+            "correctness":          corr_score,
+            "correctness_issues":   corr_issues,
+            "composite":        composite,
         }
         results.append(rec)
 
@@ -347,14 +387,44 @@ def main() -> None:
         avg_regen = round(sum(r.get("regen_count", 0) for r in scored) / n, 2)
         pct_af    = round(100 * sum(1 for r in scored if r.get("agent_faithful")) / n, 1)
 
+        # Citation metrics (only for v2 datasets that have gold_chunk_ids)
+        cite_scored = [r for r in scored if r.get("citation_recall") is not None]
+        avg_cite_prec = avg_cite_rec = None
+        if cite_scored:
+            avg_cite_prec = round(sum(r["citation_precision"] for r in cite_scored) / len(cite_scored), 4)
+            avg_cite_rec  = round(sum(r["citation_recall"]    for r in cite_scored) / len(cite_scored), 4)
+
+        # Payload with aggregates
+        payload = {
+            "pipeline":   "p4-agentic",
+            "model_judge": args.model,
+            "n": len(results),
+            "summary": {
+                "avg_faithfulness":      avg_faith,
+                "avg_relevance":         avg_rel,
+                "avg_correctness":       avg_corr,
+                "avg_composite":         avg_comp,
+                "avg_rewrites":          avg_iter,
+                "avg_regens":            avg_regen,
+                "pct_agent_faithful":    pct_af,
+                "avg_citation_precision": avg_cite_prec,
+                "avg_citation_recall":   avg_cite_rec,
+            },
+            "results": results,
+        }
+        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
         print(f"\n[done] {n} questions evaluated (P4-Agentic)")
-        print(f"  Avg faithfulness  : {avg_faith}")
-        print(f"  Avg relevance     : {avg_rel}")
-        print(f"  Avg correctness   : {avg_corr}")
-        print(f"  Avg composite     : {avg_comp}")
-        print(f"  Avg rewrites/q    : {avg_iter}")
-        print(f"  Avg regens/q      : {avg_regen}")
-        print(f"  Agent faithful%   : {pct_af}%")
+        print(f"  Avg faithfulness      : {avg_faith}")
+        print(f"  Avg relevance         : {avg_rel}")
+        print(f"  Avg correctness       : {avg_corr}")
+        print(f"  Avg composite         : {avg_comp}")
+        print(f"  Avg rewrites/q        : {avg_iter}")
+        print(f"  Avg regens/q          : {avg_regen}")
+        print(f"  Agent faithful%       : {pct_af}%")
+        if avg_cite_prec is not None:
+            print(f"  Avg citation precision: {avg_cite_prec}  (of {len(cite_scored)} scored)")
+            print(f"  Avg citation recall   : {avg_cite_rec}")
         print(f"[saved] {out_path}")
 
 
