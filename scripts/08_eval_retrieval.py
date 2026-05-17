@@ -112,7 +112,7 @@ def _worker_main(pipeline: str, top_k: int) -> None:
     elif pipeline == "p3":
         from medrag.retrieval.reranker import BGEReranker
         print(f"[worker:{pipeline}] loading reranker...", file=sys.stderr, flush=True)
-        reranker = BGEReranker(device="auto")
+        reranker = BGEReranker()  # device=None → auto-detect via RERANKER_DEVICE env
         hybrid = HybridRetriever(qdrant, embedder, candidate_k=top_k)
         fn = lambda q, k: reranker.rerank(q, hybrid.retrieve(q, k=top_k), top_k=k)
 
