@@ -333,7 +333,7 @@ function Header({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => voi
 
   return (
     <header style={{
-      height: 56, flexShrink: 0,
+      height: 60, flexShrink: 0,
       display: 'flex', alignItems: 'center', gap: 24,
       padding: '0 24px',
       background: 'var(--canvas)',
