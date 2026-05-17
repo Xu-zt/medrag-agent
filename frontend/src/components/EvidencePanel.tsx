@@ -1,74 +1,75 @@
-import { useState } from 'react'
-import clsx from 'clsx'
-import { ExternalLink, ChevronDown, ChevronUp } from 'lucide-react'
-import { useStore, chunkColor } from '../store'
+import React, { useState } from 'react'
+import { useStore } from '../store'
 import { fetchChunk } from '../api/client'
 import type { ChunkOut, ChunkContextResponse } from '../types'
 
-// ── Score bar ─────────────────────────────────────────────────────────────
-
-function ScoreBar({ score }: { score: number | null }) {
-  if (score === null) return null
-  const pct = Math.min(1, Math.max(0, score)) * 100
-  const color = score >= 0.7 ? 'bg-emerald-400' : score >= 0.4 ? 'bg-amber-400' : 'bg-rose-400'
+// ── SVG icons ─────────────────────────────────────────────────────────────
+function I({ size = 16, sw = 1.6, children, style }: {
+  size?: number; sw?: number; children: React.ReactNode; style?: React.CSSProperties
+}) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs font-mono text-slate-500 w-10 text-right">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={sw} strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true" style={style}>
+      {children}
+    </svg>
+  )
+}
+const IconExternal  = (p: { size?: number; sw?: number; style?: React.CSSProperties }) =>
+  <I {...p}><path d="M15 3h6v6M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></I>
+const IconChevDown  = (p: { size?: number; sw?: number }) => <I {...p}><path d="m6 9 6 6 6-6"/></I>
+const IconChevUp    = (p: { size?: number; sw?: number }) => <I {...p}><path d="m6 15 6-6 6 6"/></I>
+const IconBook      = (p: { size?: number; sw?: number; style?: React.CSSProperties }) =>
+  <I {...p}><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5v-17Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></I>
+
+const CITE_VARS = ['--c0','--c1','--c2','--c3','--c4','--c5','--c6','--c7']
+
+// ── Score bar ─────────────────────────────────────────────────────────────
+function ScoreBar({ score, colorVar }: { score: number | null; colorVar: string }) {
+  if (score == null) return null
+  const pct = Math.min(1, Math.max(0, score)) * 100
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span className="vm-mono" style={{ fontSize: 10, color: 'var(--muted)', minWidth: 28 }}>
         {score.toFixed(2)}
       </span>
-      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-        <div className={clsx('h-full rounded-full', color)} style={{ width: `${pct}%` }} />
+      <div style={{ flex: 1, height: 2, background: 'var(--rule-soft)', borderRadius: 1, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: `var(${colorVar})` }} />
       </div>
     </div>
   )
 }
 
 // ── Highlighted text ──────────────────────────────────────────────────────
-
-function HighlightedText({
-  text,
-  ranges,
-}: {
-  text: string
-  ranges: [number, number][]
-}) {
-  if (!ranges.length) return <span>{text}</span>
-
-  // Sort ranges
+function HighlightedText({ text, ranges }: { text: string; ranges: [number, number][] }) {
+  if (!ranges || !ranges.length) return <>{text}</>
   const sorted = [...ranges].sort((a, b) => a[0] - b[0])
-  const parts: React.ReactNode[] = []
-  let cursor = 0
-  for (const [start, end] of sorted) {
-    if (start > cursor) parts.push(<span key={cursor}>{text.slice(cursor, start)}</span>)
-    parts.push(
-      <mark key={start} className="bg-yellow-200 text-yellow-900 rounded-sm px-0.5">
-        {text.slice(start, end)}
-      </mark>,
-    )
-    cursor = end
+  const out: React.ReactNode[] = []
+  let cur = 0
+  for (const [a, b] of sorted) {
+    if (a > cur) out.push(<span key={cur}>{text.slice(cur, a)}</span>)
+    out.push(<mark key={`m${a}`} className="vm-highlight">{text.slice(a, b)}</mark>)
+    cur = b
   }
-  if (cursor < text.length) parts.push(<span key={cursor}>{text.slice(cursor)}</span>)
-  return <>{parts}</>
+  if (cur < text.length) out.push(<span key={cur}>{text.slice(cur)}</span>)
+  return <>{out}</>
 }
 
-// ── Context expansion ─────────────────────────────────────────────────────
-
+// ── Context expander ──────────────────────────────────────────────────────
 function ContextExpander({ chunkId }: { chunkId: string }) {
   const [open, setOpen] = useState(false)
   const [ctx, setCtx] = useState<ChunkContextResponse | null>(null)
   const [loading, setLoading] = useState(false)
 
-  async function toggle() {
+  async function toggle(e: React.MouseEvent) {
+    e.stopPropagation()
     if (!open && !ctx) {
       setLoading(true)
       try {
         const data = await fetchChunk(chunkId, 1)
         setCtx(data)
-      } catch {
-        // ignore
-      } finally {
-        setLoading(false)
-      }
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
     }
     setOpen((v) => !v)
   }
@@ -77,24 +78,25 @@ function ContextExpander({ chunkId }: { chunkId: string }) {
     <div>
       <button
         onClick={toggle}
-        className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 transition-colors"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          background: 'transparent', border: 'none', padding: 0,
+          color: 'var(--muted)', fontSize: 11, fontWeight: 500,
+        }}
       >
-        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        {open ? <IconChevUp size={11} sw={2} /> : <IconChevDown size={11} sw={2} />}
         {loading ? 'Loading…' : open ? 'Hide context' : 'View context'}
       </button>
-      {open && ctx && (
-        <div className="mt-2 space-y-2">
-          {ctx.prev_chunk && (
-            <div className="text-xs text-slate-400 bg-slate-50 rounded p-2 border-l-2 border-slate-200">
-              <span className="font-semibold block mb-1 text-slate-500">↑ Previous chunk</span>
-              {ctx.prev_chunk.text.slice(0, 300)}…
-            </div>
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }} className="vm-fadeup">
+          {ctx?.prev_chunk && (
+            <ContextSnippet label="Preceding" text={ctx.prev_chunk.text.slice(0, 300)} />
           )}
-          {ctx.next_chunk && (
-            <div className="text-xs text-slate-400 bg-slate-50 rounded p-2 border-l-2 border-slate-200">
-              <span className="font-semibold block mb-1 text-slate-500">↓ Next chunk</span>
-              {ctx.next_chunk.text.slice(0, 300)}…
-            </div>
+          {ctx?.next_chunk && (
+            <ContextSnippet label="Following" text={ctx.next_chunk.text.slice(0, 300)} />
+          )}
+          {!ctx && open && (
+            <ContextSnippet label="Context" text="Context unavailable for this source." />
           )}
         </div>
       )}
@@ -102,153 +104,231 @@ function ContextExpander({ chunkId }: { chunkId: string }) {
   )
 }
 
-// ── Color accent map ──────────────────────────────────────────────────────
-
-const COLOR_ACCENT: Record<string, string> = {
-  blue: 'border-blue-400 bg-blue-50',
-  emerald: 'border-emerald-400 bg-emerald-50',
-  violet: 'border-violet-400 bg-violet-50',
-  amber: 'border-amber-400 bg-amber-50',
-  rose: 'border-rose-400 bg-rose-50',
-  cyan: 'border-cyan-400 bg-cyan-50',
-  fuchsia: 'border-fuchsia-400 bg-fuchsia-50',
-  lime: 'border-lime-400 bg-lime-50',
+function ContextSnippet({ label, text }: { label: string; text: string }) {
+  return (
+    <div style={{
+      padding: '8px 10px',
+      borderLeft: '2px solid var(--rule)',
+      background: 'var(--panel-2)',
+      borderRadius: '0 4px 4px 0',
+    }}>
+      <div className="vm-eyebrow" style={{ fontSize: 9, marginBottom: 4 }}>{label}</div>
+      <p style={{
+        margin: 0, fontSize: 11.5, lineHeight: 1.55,
+        color: 'var(--muted)', fontStyle: 'italic', fontFamily: 'var(--serif)',
+      }}>
+        {text}
+      </p>
+    </div>
+  )
 }
 
-const BADGE_COLOR: Record<string, string> = {
-  blue: 'bg-blue-500',
-  emerald: 'bg-emerald-500',
-  violet: 'bg-violet-500',
-  amber: 'bg-amber-500',
-  rose: 'bg-rose-500',
-  cyan: 'bg-cyan-500',
-  fuchsia: 'bg-fuchsia-500',
-  lime: 'bg-lime-500',
-}
-
-// ── Chunk card ────────────────────────────────────────────────────────────
-
-function ChunkCard({
-  chunk,
-  idx,
-  isSelected,
-  onSelect,
+// ── Evidence card ─────────────────────────────────────────────────────────
+function EvidenceCard({
+  chunk, idx, isSelected, onSelect,
 }: {
-  chunk: ChunkOut
-  idx: number
-  isSelected: boolean
-  onSelect: (id: string) => void
+  chunk: ChunkOut; idx: number; isSelected: boolean; onSelect: (id: string) => void
 }) {
-  const color = chunkColor(idx)
-  const accent = COLOR_ACCENT[color]
-  const badge = BADGE_COLOR[color]
+  const colorVar = CITE_VARS[idx % CITE_VARS.length]
+  const ref = React.useRef<HTMLElement>(null)
+
+  React.useEffect(() => {
+    if (isSelected && ref.current) {
+      ref.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [isSelected])
+
+  const ext = chunk as ChunkOut & { authors?: string; journal?: string; year?: number }
 
   return (
-    <div
+    <article
+      ref={ref}
       id={`chunk-${chunk.chunk_id}`}
-      className={clsx(
-        'rounded-xl border-l-4 p-4 cursor-pointer transition-all',
-        accent,
-        isSelected && 'ring-2 ring-offset-1 ring-blue-400',
-      )}
       onClick={() => onSelect(chunk.chunk_id)}
+      className="vm-fadeup"
+      style={{
+        position: 'relative',
+        padding: '18px 18px 16px 22px',
+        background: 'var(--panel)',
+        border: `1px solid ${isSelected ? `var(${colorVar})` : 'var(--rule)'}`,
+        borderLeft: `3px solid var(${colorVar})`,
+        borderRadius: 6,
+        cursor: 'pointer',
+        transition: 'border-color 160ms',
+      }}
     >
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2">
-          <span
-            className={clsx('text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center', badge)}
-          >
-            {idx + 1}
-          </span>
-          <span className="text-xs font-semibold text-slate-600">{chunk.citation}</span>
-          <span className={clsx(
-            'text-xs px-1.5 py-0.5 rounded-full font-medium',
-            chunk.source === 'pubmed'
-              ? 'bg-blue-100 text-blue-700'
-              : 'bg-purple-100 text-purple-700',
-          )}>
-            {chunk.source === 'pubmed' ? 'PubMed' : 'PMC'}
-          </span>
-        </div>
+      {/* Index numeral */}
+      <div style={{
+        position: 'absolute', top: 12, right: 16,
+        fontFamily: 'var(--serif)', fontStyle: 'italic',
+        fontSize: 24, lineHeight: 1,
+        color: `var(${colorVar})`,
+        opacity: 0.85,
+        letterSpacing: '-0.02em',
+      }}>
+        {idx + 1}
       </div>
 
-      {/* Score */}
-      <div className="mb-2">
-        <ScoreBar score={chunk.score ?? null} />
+      {/* Citation + source pill */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, paddingRight: 30 }}>
+        <span className="vm-mono" style={{ fontSize: 10.5, fontWeight: 600, color: `var(${colorVar})`, letterSpacing: '0.02em' }}>
+          {chunk.citation}
+        </span>
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: '1px 6px', borderRadius: 3,
+          fontSize: 9.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
+          border: '1px solid var(--rule)', color: 'var(--muted)',
+          fontFamily: 'var(--mono)',
+        }}>
+          {chunk.source === 'pubmed' ? 'PubMed' : 'PMC'}
+        </span>
       </div>
 
       {/* Title */}
-      <p className="text-xs font-medium text-slate-700 mb-2 line-clamp-2">{chunk.title}</p>
-      {chunk.section && (
-        <p className="text-xs text-slate-400 mb-1">{chunk.section}</p>
+      <h3 style={{
+        margin: '4px 0 4px 0',
+        fontSize: 13.5, lineHeight: 1.35, fontWeight: 600,
+        color: 'var(--ink)', letterSpacing: '-0.005em',
+        paddingRight: 30,
+      }}>
+        {chunk.title}
+      </h3>
+
+      {/* Authors / journal / year / section */}
+      {(ext.authors || ext.journal || ext.year || chunk.section) && (
+        <div style={{
+          fontSize: 11, color: 'var(--muted)', marginBottom: 8,
+          fontFamily: 'var(--serif)', fontStyle: 'italic',
+          letterSpacing: '-0.005em',
+        }}>
+          {ext.authors && <>{ext.authors} · </>}
+          {(ext.journal || ext.year) && (
+            <span style={{ fontStyle: 'normal', fontFamily: 'var(--sans)', fontSize: 10.5 }}>
+              {ext.journal}{ext.year ? ` ${ext.year}` : ''}
+            </span>
+          )}
+          {chunk.section && (
+            <> · <span className="vm-mono" style={{
+              fontStyle: 'normal', fontSize: 9.5, color: 'var(--faint)',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+            }}>{chunk.section}</span></>
+          )}
+        </div>
       )}
 
-      {/* Text */}
-      <p className="text-xs text-slate-600 leading-relaxed line-clamp-4">
-        <HighlightedText text={chunk.text} ranges={chunk.highlight_ranges ?? []} />
-      </p>
+      {/* Score bar */}
+      <div style={{ marginBottom: 10 }}>
+        <ScoreBar score={chunk.score ?? null} colorVar={colorVar} />
+      </div>
+
+      {/* Quote block */}
+      <blockquote style={{ margin: 0, paddingLeft: 10, borderLeft: `2px solid var(${colorVar})`, opacity: 0.85 }}>
+        <p style={{
+          margin: 0, fontSize: 12.5, lineHeight: 1.55,
+          color: 'var(--ink-soft)',
+          fontFamily: 'var(--serif)',
+          letterSpacing: '-0.003em',
+        }}>
+          <HighlightedText text={chunk.text} ranges={chunk.highlight_ranges ?? []} />
+        </p>
+      </blockquote>
 
       {/* Actions */}
-      <div className="mt-3 flex items-center gap-4">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 12 }}>
         <ContextExpander chunkId={chunk.chunk_id} />
         {chunk.external_url && (
           <a
             href={chunk.external_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs text-slate-400 hover:text-blue-600 transition-colors"
             onClick={(e) => e.stopPropagation()}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              color: 'var(--muted)', fontSize: 11, fontWeight: 500,
+              textDecoration: 'none',
+            }}
           >
-            <ExternalLink size={11} />
-            {chunk.source === 'pubmed' ? 'PubMed' : 'PMC'}
+            <IconExternal size={11} sw={2} />
+            Open
           </a>
         )}
       </div>
-    </div>
+    </article>
   )
 }
 
 // ── EvidencePanel ─────────────────────────────────────────────────────────
-
 export function EvidencePanel() {
   const { result, liveChunks, selectedChunkId, setSelectedChunkId, isStreaming } = useStore()
-
   const chunks = result?.chunks?.length ? result.chunks : liveChunks
 
   if (!chunks.length && !isStreaming) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-slate-400 p-4 text-center">
-        <div className="text-3xl mb-3 opacity-30">📄</div>
-        <p className="text-sm">Retrieved evidence will appear here</p>
-      </div>
+      <aside style={{
+        height: '100%',
+        borderLeft: '1px solid var(--rule)',
+        background: 'var(--panel-2)',
+        padding: '24px 22px',
+      }}>
+        <div className="vm-eyebrow" style={{ marginBottom: 14 }}>Evidence</div>
+        <div style={{
+          padding: '40px 8px', textAlign: 'center',
+          color: 'var(--faint)', fontSize: 13,
+          fontFamily: 'var(--serif)', fontStyle: 'italic',
+        }}>
+          <IconBook size={22} style={{ opacity: 0.4, marginBottom: 10 }} />
+          <p style={{ margin: 0 }}>Retrieved passages will appear here, one per source.</p>
+        </div>
+      </aside>
     )
   }
 
-  function handleSelect(id: string) {
-    setSelectedChunkId(selectedChunkId === id ? null : id)
-  }
-
   return (
-    <div className="h-full overflow-y-auto p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Evidence
-        </h2>
-        <span className="text-xs text-slate-400">{chunks.length} chunk{chunks.length !== 1 ? 's' : ''}</span>
+    <aside style={{
+      height: '100%', overflowY: 'auto',
+      borderLeft: '1px solid var(--rule)',
+      background: 'var(--panel-2)',
+    }}>
+      <div style={{
+        padding: '18px 22px 12px',
+        borderBottom: '1px solid var(--rule-soft)',
+        position: 'sticky', top: 0,
+        background: 'var(--panel-2)',
+        backdropFilter: 'blur(8px)',
+        zIndex: 1,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <span className="vm-eyebrow">Evidence</span>
+          <span className="vm-mono" style={{ fontSize: 10, color: 'var(--faint)' }}>
+            {chunks.length} {chunks.length === 1 ? 'source' : 'sources'}
+          </span>
+        </div>
+        <div style={{ marginTop: 4, fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>
+          Click a passage to highlight its citation in the answer.
+        </div>
       </div>
 
-      <div className="space-y-3">
+      <div style={{ padding: '16px 18px 32px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {chunks.map((chunk, i) => (
-          <ChunkCard
+          <EvidenceCard
             key={chunk.chunk_id}
             chunk={chunk}
             idx={i}
             isSelected={selectedChunkId === chunk.chunk_id}
-            onSelect={handleSelect}
+            onSelect={(id) => setSelectedChunkId(selectedChunkId === id ? null : id)}
           />
         ))}
+        {isStreaming && (
+          <div style={{
+            padding: '12px 14px', borderRadius: 6, border: '1px dashed var(--rule)',
+            color: 'var(--faint)', fontSize: 12, fontFamily: 'var(--serif)', fontStyle: 'italic',
+            textAlign: 'center',
+          }} className="vm-pulse">
+            Retrieving more passages…
+          </div>
+        )}
       </div>
-    </div>
+    </aside>
   )
 }

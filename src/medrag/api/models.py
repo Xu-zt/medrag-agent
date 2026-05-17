@@ -29,6 +29,10 @@ class ChunkOut(BaseModel):
     score: float | None = None
     highlight_ranges: list[tuple[int, int]] = Field(default_factory=list)
     external_url: str = ""
+    # Bibliographic metadata (populated from Qdrant payload; PubMed only)
+    authors: str | None = None
+    journal: str | None = None
+    year: int | None = None
 
 
 # ── WebSocket event stream ───────────────────────────────────────────────────

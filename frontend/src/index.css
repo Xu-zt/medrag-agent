@@ -1,41 +1,231 @@
-@import "tailwindcss";
+/* ── VeritasMed Design System — OKLCH token foundation ─────────────────── */
 
-/* Custom Tailwind utilities */
-@layer utilities {
-  .w-70 {
-    width: 17.5rem; /* 280px */
-  }
-  .w-90 {
-    width: 22.5rem; /* 360px */
-  }
+/* Paper (light) theme — default */
+:root {
+  --serif:  'Instrument Serif', 'Newsreader', Georgia, serif;
+  --sans:   'Inter Tight', system-ui, sans-serif;
+  --mono:   'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Surface */
+  --canvas:   oklch(98% 0.005 80);
+  --panel:    oklch(100% 0 0);
+  --panel-2:  oklch(96.5% 0.006 80);
+
+  /* Text */
+  --ink:      oklch(18% 0.015 250);
+  --ink-soft: oklch(36% 0.012 250);
+  --muted:    oklch(52% 0.010 250);
+  --faint:    oklch(68% 0.008 250);
+
+  /* Borders */
+  --rule:      oklch(87% 0.006 250);
+  --rule-soft: oklch(92% 0.004 250);
+
+  /* Accent (teal-blue) */
+  --accent:      oklch(52% 0.16 230);
+  --accent-soft: oklch(94% 0.04 230);
+  --accent-ink:  oklch(28% 0.12 230);
+
+  /* Semantic */
+  --verified:      oklch(52% 0.14 155);
+  --verified-soft: oklch(94% 0.04 155);
+  --warn:          oklch(62% 0.16 65);
+  --warn-soft:     oklch(95% 0.05 65);
+  --error:         oklch(54% 0.20 25);
+  --error-soft:    oklch(95% 0.05 25);
+
+  /* Citation palette (8 distinct hues, perceptually balanced) */
+  --c0: oklch(52% 0.16 230);
+  --c1: oklch(52% 0.15 155);
+  --c2: oklch(54% 0.18 310);
+  --c3: oklch(62% 0.16 65);
+  --c4: oklch(54% 0.20 25);
+  --c5: oklch(52% 0.15 190);
+  --c6: oklch(55% 0.16 285);
+  --c7: oklch(60% 0.14 110);
+
+  /* Shadows */
+  --shadow-sm:    0 1px 3px oklch(0% 0 0 / 0.08);
+  --shadow-float: 0 4px 16px oklch(0% 0 0 / 0.12);
 }
 
-/* Scrollbar styling */
+/* Midnight theme */
+[data-theme="midnight"] {
+  --canvas:   oklch(14% 0.012 250);
+  --panel:    oklch(18% 0.014 250);
+  --panel-2:  oklch(20% 0.012 250);
+  --ink:      oklch(92% 0.006 80);
+  --ink-soft: oklch(78% 0.008 80);
+  --muted:    oklch(60% 0.010 80);
+  --faint:    oklch(42% 0.008 80);
+  --rule:      oklch(28% 0.010 250);
+  --rule-soft: oklch(24% 0.008 250);
+  --accent:      oklch(62% 0.16 230);
+  --accent-soft: oklch(22% 0.06 230);
+  --accent-ink:  oklch(80% 0.10 230);
+  --verified:      oklch(62% 0.14 155);
+  --verified-soft: oklch(22% 0.06 155);
+  --warn:          oklch(72% 0.16 65);
+  --warn-soft:     oklch(22% 0.06 65);
+  --error:         oklch(64% 0.20 25);
+  --error-soft:    oklch(22% 0.06 25);
+}
+
+/* Clinical theme */
+[data-theme="clinical"] {
+  --canvas:   oklch(97% 0.003 220);
+  --panel:    oklch(100% 0 0);
+  --panel-2:  oklch(95% 0.005 220);
+  --ink:      oklch(15% 0.020 220);
+  --ink-soft: oklch(32% 0.015 220);
+  --muted:    oklch(50% 0.012 220);
+  --faint:    oklch(66% 0.008 220);
+  --rule:      oklch(84% 0.010 220);
+  --rule-soft: oklch(90% 0.006 220);
+  --accent:      oklch(46% 0.20 220);
+  --accent-soft: oklch(93% 0.06 220);
+  --accent-ink:  oklch(24% 0.15 220);
+}
+
+/* ── Reset & base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button { cursor: pointer; font-family: inherit; }
+input, textarea, select { font-family: inherit; }
+a { color: var(--accent); }
+
+/* ── Utility classes ──────────────────────────────────────────────────────── */
+.vm-eyebrow {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.vm-mono { font-family: var(--mono); }
+.vm-serif { font-family: var(--serif); }
+
+.vm-card {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Prose body copy */
+.vm-prose {
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 1.72;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+
+.vm-prose p { margin: 0 0 1.1em; }
+.vm-prose p:last-child { margin-bottom: 0; }
+
+/* Inline citation superscript */
+.vm-cite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+  vertical-align: super;
+  margin-left: 1px;
+  cursor: pointer;
+  transition: opacity 80ms;
+  color: var(--cite-color, var(--accent));
+  background: transparent;
+  border: 1px solid currentColor;
+  opacity: 0.85;
+}
+.vm-cite:hover { opacity: 1; }
+.vm-cite.vm-cite--active { opacity: 1; background: var(--cite-color, var(--accent)); color: var(--panel); }
+
+/* Keyword highlight */
+.vm-highlight {
+  background: oklch(88% 0.12 80 / 0.5);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+[data-theme="midnight"] .vm-highlight {
+  background: oklch(55% 0.12 80 / 0.35);
+}
+
+/* Drop cap */
+.vm-dropcap::first-letter {
+  font-family: var(--serif);
+  font-size: 3.6em;
+  line-height: 0.78;
+  float: left;
+  margin-right: 0.06em;
+  margin-top: 0.04em;
+  color: var(--ink);
+}
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
+@keyframes vmFadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes vmPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes vmCaret {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes vmSpin {
+  to { transform: rotate(360deg); }
+}
+@keyframes vmPing {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+.vm-fadeup  { animation: vmFadeUp 220ms ease both; }
+.vm-pulse   { animation: vmPulse 1.6s ease-in-out infinite; }
+.vm-caret::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: vmCaret 1s step-end infinite;
+}
+.vm-spin    { animation: vmSpin 1s linear infinite; }
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: var(--rule) transparent;
 }
-
-*::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 2px;
-}
-
-/* Prose customisation */
-.prose p {
-  margin-top: 0.75em;
-  margin-bottom: 0.75em;
-}
-
-.prose :first-child {
-  margin-top: 0;
-}
+*::-webkit-scrollbar { width: 4px; height: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 2px; }
