@@ -2,19 +2,6 @@ import { create } from 'zustand'
 import type { ChunkOut } from '../types'
 import type { AnswerOut, TimelineNode } from '../types/ws'
 
-// ── Chunk colours (cycle through 8 distinct hues) ────────────────────────
-const CHUNK_COLORS = [
-  'blue', 'emerald', 'violet', 'amber', 'rose', 'cyan', 'fuchsia', 'lime',
-] as const
-
-export type ChunkColor = typeof CHUNK_COLORS[number]
-
-export function chunkColor(idx: number): ChunkColor {
-  return CHUNK_COLORS[idx % CHUNK_COLORS.length]
-}
-
-// ── Store ─────────────────────────────────────────────────────────────────
-
 export interface AppState {
   // Session
   threadId: string
@@ -25,6 +12,10 @@ export interface AppState {
   // Query
   query: string
   setQuery: (q: string) => void
+
+  // Active query (snapshot at send time — used for question echo + thread title)
+  activeQuery: string
+  setActiveQuery: (q: string) => void
 
   // Streaming state
   isStreaming: boolean
@@ -63,6 +54,9 @@ export const useStore = create<AppState>((set) => ({
   query: '',
   setQuery: (q) => set({ query: q }),
 
+  activeQuery: '',
+  setActiveQuery: (q) => set({ activeQuery: q }),
+
   isStreaming: false,
   setStreaming: (v) => set({ isStreaming: v }),
 
@@ -70,7 +64,14 @@ export const useStore = create<AppState>((set) => ({
   setTimeline: (nodes) => set({ timeline: nodes }),
   updateNode: (name, patch) =>
     set((s) => ({
-      timeline: s.timeline.map((n) => (n.name === name ? { ...n, ...patch } : n)),
+      timeline: s.timeline.map((n) => {
+        if (n.name !== name) return n
+        const elapsed_ms =
+          patch.status === 'done' && n.timestamp
+            ? Date.now() - n.timestamp
+            : n.elapsed_ms
+        return { ...n, ...patch, elapsed_ms }
+      }),
     })),
   pushNode: (node) => set((s) => ({ timeline: [...s.timeline, node] })),
 

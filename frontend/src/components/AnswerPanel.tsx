@@ -2,7 +2,7 @@ import React from 'react'
 import { useStore } from '../store'
 import type { AnswerOut } from '../types/ws'
 
-// ── SVG icons ──────────────────────────────────────────────────────────────
+// ── SVG icons ─────────────────────────────────────────────────────────────
 function I({ size = 16, sw = 1.6, children, style }: {
   size?: number; sw?: number; children: React.ReactNode; style?: React.CSSProperties
 }) {
@@ -14,57 +14,101 @@ function I({ size = 16, sw = 1.6, children, style }: {
     </svg>
   )
 }
-const IconCheck   = (p: { size?: number; sw?: number }) => <I {...p}><path d="m5 12 4 4L19 7"/></I>
-const IconAlert   = (p: { size?: number; sw?: number }) => <I {...p}><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></I>
-const IconArrow   = (p: { size?: number; sw?: number }) => <I {...p}><path d="M5 12h14M12 5l7 7-7 7"/></I>
-const IconX       = (p: { size?: number; sw?: number }) => <I {...p}><path d="M18 6 6 18M6 6l12 12"/></I>
+const IconCheck     = (p: { size?: number; sw?: number }) => <I {...p}><path d="m5 12 4 4L19 7"/></I>
+const IconAlert     = (p: { size?: number; sw?: number }) => <I {...p}><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></I>
+const IconRefresh   = (p: { size?: number; sw?: number }) => <I {...p}><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.3L3 16M3 21v-5h5"/></I>
+const IconCopy      = (p: { size?: number; sw?: number }) => <I {...p}><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></I>
+const IconBookmark  = (p: { size?: number; sw?: number }) => <I {...p}><path d="M19 21 12 16.5 5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16Z"/></I>
+const IconSparkle   = (p: { size?: number; sw?: number }) => <I {...p}><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></I>
+const IconArrowUp   = (p: { size?: number; sw?: number; style?: React.CSSProperties }) => <I {...p}><path d="M12 19V5M6 11l6-6 6 6"/></I>
+const IconChevRight = (p: { size?: number; sw?: number; style?: React.CSSProperties }) => <I {...p}><path d="m9 18 6-6-6-6"/></I>
 
 const CITE_VARS = ['--c0','--c1','--c2','--c3','--c4','--c5','--c6','--c7']
 
-// ── Inline citation annotation ─────────────────────────────────────────────
-function AnnotatedParagraph({ text, citations, onCiteClick, isFirst }: {
+// ── Streaming caret ────────────────────────────────────────────────────────
+function StreamingCaret() {
+  return (
+    <span style={{
+      display: 'inline-block', width: 8, height: '0.95em',
+      verticalAlign: '-0.1em',
+      background: 'var(--accent)',
+      animation: 'vmCaret 1s steps(2) infinite',
+      marginLeft: 2, borderRadius: 1,
+    }} />
+  )
+}
+
+// ── Citation index map ─────────────────────────────────────────────────────
+function buildCiteMap(citations: string[]): Record<string, number> {
+  const map: Record<string, number> = {}
+  citations.forEach((c, i) => { map[c] = i })
+  return map
+}
+
+// ── Annotated paragraph ────────────────────────────────────────────────────
+function AnnotatedParagraph({ text, citeMap, onCiteClick, isFirst }: {
   text: string
-  citations: string[]
+  citeMap: Record<string, number>
   onCiteClick: (c: string) => void
   isFirst: boolean
 }) {
-  const CITE_RE = /\[(PMID:[^\]]+|PMC:[^\]]+)\]/g
+  const CITE_RE = /\[(PMID:[^\]]+|PMC:[^\]]+|DOI:[^\]]+)\]/g
   const parts: React.ReactNode[] = []
   let last = 0
-  let match: RegExpExecArray | null
-  let key = 0
-
-  while ((match = CITE_RE.exec(text)) !== null) {
-    if (match.index > last) {
-      parts.push(<span key={key++}>{text.slice(last, match.index)}</span>)
-    }
-    const citeStr = match[1]
-    const idx = citations.indexOf(citeStr)
-    const colorVar = CITE_VARS[(idx >= 0 ? idx : citations.length) % CITE_VARS.length]
+  let m: RegExpExecArray | null
+  while ((m = CITE_RE.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index))
+    const citeStr = m[1]
+    const idx = citeMap[citeStr]
+    const colorVar = idx != null ? CITE_VARS[idx % CITE_VARS.length] : '--accent'
     parts.push(
-      <button
-        key={key++}
+      <span
+        key={m.index}
         className="vm-cite"
         style={{ '--cite-color': `var(${colorVar})` } as React.CSSProperties}
-        onClick={() => onCiteClick(citeStr)}
+        onClick={(e) => { e.stopPropagation(); onCiteClick(citeStr) }}
         title={citeStr}
+        role="button"
+        tabIndex={0}
       >
-        {idx >= 0 ? idx + 1 : '?'}
-      </button>
+        {idx != null ? idx + 1 : '?'}
+      </span>
     )
-    last = match.index + match[0].length
+    last = m.index + m[0].length
   }
-  if (last < text.length) parts.push(<span key={key++}>{text.slice(last)}</span>)
-
+  if (last < text.length) parts.push(text.slice(last))
   return (
-    <p style={{
-      margin: '0 0 1.1em', fontFamily: 'var(--serif)', fontSize: 16,
-      lineHeight: 1.72, color: 'var(--ink)', letterSpacing: '-0.005em',
-    }}
-      className={isFirst ? 'vm-dropcap' : undefined}
-    >
+    <p className={isFirst ? 'vm-dropcap' : undefined}>
       {parts}
     </p>
+  )
+}
+
+// ── Toolbar button ─────────────────────────────────────────────────────────
+function ToolbarButton({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <button
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 5,
+        padding: '5px 9px', borderRadius: 6,
+        background: 'transparent', color: 'var(--muted)',
+        border: '1px solid transparent',
+        fontSize: 11, fontWeight: 500,
+        transition: 'all 120ms',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'var(--panel-2)'
+        e.currentTarget.style.borderColor = 'var(--rule)'
+        e.currentTarget.style.color = 'var(--ink-soft)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent'
+        e.currentTarget.style.borderColor = 'transparent'
+        e.currentTarget.style.color = 'var(--muted)'
+      }}
+    >
+      {children} {label}
+    </button>
   )
 }
 
@@ -73,76 +117,120 @@ function VerificationMark({ result }: { result: AnswerOut }) {
   const ok = result.faithful
   return (
     <div style={{
-      marginTop: 28,
-      padding: '14px 18px',
-      borderRadius: 10,
+      marginTop: 36, padding: '18px 22px',
       border: `1px solid ${ok ? 'var(--verified)' : 'var(--warn)'}`,
+      borderRadius: 4,
       background: ok ? 'var(--verified-soft)' : 'var(--warn-soft)',
       position: 'relative',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <div style={{ color: ok ? 'var(--verified)' : 'var(--warn)' }}>
-          {ok ? <IconCheck size={15} sw={2.2} /> : <IconAlert size={15} sw={2.2} />}
-        </div>
-        <span style={{
-          fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: 14,
-          color: ok ? 'var(--verified)' : 'var(--warn)', letterSpacing: '-0.005em',
-        }}>
-          {ok ? 'All claims literature-supported' : 'Unsupported claims detected'}
-        </span>
+      <div style={{
+        position: 'absolute', top: -1, left: -1,
+        width: 28, height: 28,
+        background: ok ? 'var(--verified)' : 'var(--warn)',
+        color: 'var(--panel)',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        borderRadius: '3px 0 8px 0',
+      }}>
+        {ok ? <IconCheck size={14} sw={2.6} /> : <IconAlert size={14} sw={2.4} />}
       </div>
-      {!ok && result.faithfulness_issues && (
-        <p style={{ margin: '0 0 8px', fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
-          {result.faithfulness_issues}
-        </p>
-      )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 11 }}>
-        <MetricChip label="Confidence" value={`${(result.confidence * 100).toFixed(0)}%`} />
-        <MetricChip label="Rewrites"   value={String(result.iterations)} />
-        <MetricChip label="Regen"      value={String(result.regen_count)} />
-        <MetricChip label="Latency"    value={`${(result.latency_ms / 1000).toFixed(1)}s`} />
-        <MetricChip label="Verifier"   value="NLI" />
+
+      <div style={{ marginLeft: 36 }}>
+        <div style={{
+          fontFamily: 'var(--serif)', fontStyle: 'italic',
+          fontSize: 18, lineHeight: 1.2,
+          color: ok ? 'var(--verified)' : 'var(--warn)',
+        }}>
+          {ok ? 'Verified against retrieved literature' : 'Unsupported claims detected'}
+        </div>
+
+        {!ok && result.faithfulness_issues && (
+          <p style={{ margin: '6px 0 0 0', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
+            {result.faithfulness_issues}
+          </p>
+        )}
+
+        <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: '4px 22px', fontSize: 11, color: 'var(--muted)' }}>
+          <Metric label="confidence"    value={`${Math.round(result.confidence * 100)}%`} />
+          <Metric label="rewrites"      value={String(result.iterations)} />
+          <Metric label="regenerations" value={String(result.regen_count)} />
+          <Metric label="elapsed"       value={`${(result.latency_ms / 1000).toFixed(2)}s`} />
+          <Metric label="verifier"      value="NLI · DeBERTa-v3" />
+        </div>
       </div>
     </div>
   )
 }
 
-function MetricChip({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: string; value: string }) {
+  if (!value) return null
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <span className="vm-eyebrow" style={{ fontSize: 8 }}>{label}</span>
-      <span className="vm-mono" style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 600 }}>{value}</span>
+    <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 0 }}>
+      <span className="vm-eyebrow" style={{ fontSize: 9, letterSpacing: '0.16em', color: 'var(--faint)' }}>
+        {label}
+      </span>
+      <span className="vm-mono" style={{ fontSize: 12, color: 'var(--ink-soft)', fontWeight: 600 }}>
+        {value}
+      </span>
     </div>
   )
 }
 
 // ── Sources strip ──────────────────────────────────────────────────────────
-function SourcesStrip({ result, onCiteClick }: { result: AnswerOut; onCiteClick: (c: string) => void }) {
-  if (!result.citations.length) return null
+function SourcesStrip({
+  result,
+  onCiteClick,
+}: {
+  result: AnswerOut
+  onCiteClick: (c: string) => void
+}) {
   return (
-    <div style={{ marginTop: 18 }}>
-      <div className="vm-eyebrow" style={{ marginBottom: 8 }}>Sources</div>
+    <div style={{ marginTop: 32 }}>
+      <div className="vm-eyebrow" style={{ marginBottom: 10 }}>
+        Sources cited · {result.citations.length}
+      </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {result.citations.map((c, i) => {
-          const colorVar = CITE_VARS[i % CITE_VARS.length]
+        {result.citations.map((c: string, i: number) => {
           const chunk = result.chunks.find((ch: AnswerOut['chunks'][0]) => ch.citation === c)
+          const colorVar = CITE_VARS[i % CITE_VARS.length]
+          const ext = chunk as typeof chunk & { journal?: string; year?: number }
           return (
             <button
               key={c}
               onClick={() => onCiteClick(c)}
-              title={chunk?.title ?? c}
               style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '5px 10px', borderRadius: 5,
-                border: `1px solid var(${colorVar})`,
-                background: 'transparent',
-                color: `var(${colorVar})`,
-                fontSize: 11, fontWeight: 600, fontFamily: 'var(--mono)',
-                transition: 'background 120ms',
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '6px 11px 6px 8px',
+                border: '1px solid var(--rule)',
+                borderRadius: 6,
+                background: 'var(--panel)',
+                color: 'var(--ink-soft)',
+                fontSize: 11, textAlign: 'left',
+                maxWidth: 320, transition: 'all 120ms',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--panel-2)'
+                e.currentTarget.style.borderColor = `var(${colorVar})`
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--panel)'
+                e.currentTarget.style.borderColor = 'var(--rule)'
               }}
             >
-              <span style={{ fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: 14 }}>{i + 1}</span>
-              {c}
+              <span style={{
+                fontFamily: 'var(--serif)', fontStyle: 'italic',
+                color: `var(${colorVar})`, fontSize: 13, lineHeight: 1,
+                width: 16, textAlign: 'center', fontWeight: 500,
+              }}>
+                {i + 1}
+              </span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span className="vm-mono" style={{ color: 'var(--faint)', fontSize: 10 }}>{c}</span>
+                {ext && (ext.journal || ext.year) && (
+                  <span style={{ marginLeft: 6, color: 'var(--ink-soft)' }}>
+                    {ext.journal}{ext.year ? ` · ${ext.year}` : ''}
+                  </span>
+                )}
+              </span>
             </button>
           )
         })}
@@ -151,56 +239,38 @@ function SourcesStrip({ result, onCiteClick }: { result: AnswerOut; onCiteClick:
   )
 }
 
-// ── Empty state ────────────────────────────────────────────────────────────
-const SUGGESTED = [
-  'What is the mechanism of metformin in type 2 diabetes?',
-  'Efficacy of mRNA vaccines against severe COVID-19',
-  'Risk factors for acute kidney injury in ICU patients',
-]
-
-function EmptyState({ onSuggest }: { onSuggest: (q: string) => void }) {
+// ── Follow-ups ─────────────────────────────────────────────────────────────
+function FollowUps({ items, onPick }: { items: string[]; onPick: (q: string) => void }) {
   return (
-    <div style={{
-      height: '100%', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      padding: '40px 32px', textAlign: 'center',
-    }}>
-      <div style={{
-        fontFamily: 'var(--serif)', fontSize: 38, letterSpacing: '-0.03em',
-        color: 'var(--ink)', lineHeight: 1, marginBottom: 10,
-      }}>
-        VeritasMed
+    <div style={{ marginTop: 36 }}>
+      <div className="vm-eyebrow" style={{ marginBottom: 10 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <IconSparkle size={11} sw={2} /> Suggested follow-ups
+        </span>
       </div>
-      <p style={{
-        fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: 15,
-        color: 'var(--muted)', margin: '0 0 28px', maxWidth: 420,
-        lineHeight: 1.55,
-      }}>
-        Self-verifying medical QA — evidence retrieved, claims checked.
-      </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', maxWidth: 480 }}>
-        {SUGGESTED.map((q) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {items.map((q, i) => (
           <button
-            key={q}
-            onClick={() => onSuggest(q)}
+            key={i}
+            onClick={() => onPick(q)}
             style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '12px 16px', borderRadius: 8, border: '1px solid var(--rule)',
-              background: 'var(--panel)', color: 'var(--ink-soft)',
-              fontSize: 13, fontFamily: 'var(--serif)', textAlign: 'left',
-              lineHeight: 1.4, transition: 'border-color 120ms, color 120ms',
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '11px 4px',
+              borderTop: i === 0 ? '1px solid var(--rule)' : 'none',
+              borderBottom: '1px solid var(--rule)',
+              background: 'transparent',
+              color: 'var(--ink-soft)',
+              fontSize: 14, fontFamily: 'var(--serif)',
+              letterSpacing: '-0.005em',
+              textAlign: 'left', lineHeight: 1.4,
+              transition: 'color 120ms',
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'var(--accent)'
-              e.currentTarget.style.color = 'var(--ink)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'var(--rule)'
-              e.currentTarget.style.color = 'var(--ink-soft)'
-            }}
+            onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+            onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-soft)'}
           >
-            <span>{q}</span>
-            <IconArrow size={13} sw={2} />
+            <IconArrowUp size={13} sw={2} style={{ transform: 'rotate(45deg)', color: 'var(--faint)', flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>{q}</span>
+            <IconChevRight size={13} sw={2} style={{ color: 'var(--faint)', flexShrink: 0 }} />
           </button>
         ))}
       </div>
@@ -208,75 +278,181 @@ function EmptyState({ onSuggest }: { onSuggest: (q: string) => void }) {
   )
 }
 
+// ── Empty state ────────────────────────────────────────────────────────────
+function EmptyState({ suggestedQueries, onPickQuery }: {
+  suggestedQueries: string[]
+  onPickQuery: (q: string) => void
+}) {
+  return (
+    <div style={{
+      height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 40,
+    }}>
+      <div style={{ maxWidth: 560, textAlign: 'center' }}>
+        <div style={{
+          fontFamily: 'var(--serif)', fontSize: 56, lineHeight: 1, marginBottom: 4,
+          color: 'var(--ink)', letterSpacing: '-0.03em',
+        }}>
+          <span style={{ fontStyle: 'italic' }}>Veritas</span>
+          <span style={{ color: 'var(--accent)' }}>Med</span>
+        </div>
+        <div className="vm-eyebrow" style={{ marginBottom: 24 }}>Self-verifying medical Q&amp;A</div>
+
+        <p style={{
+          fontFamily: 'var(--serif)', fontSize: 19, lineHeight: 1.5,
+          color: 'var(--ink-soft)', maxWidth: 480, margin: '0 auto 36px',
+          letterSpacing: '-0.005em',
+        }}>
+          Ask a clinical question. We retrieve evidence from PubMed and PMC,
+          draft a literature-grounded answer, and verify every claim
+          against the source text before showing it to you.
+        </p>
+
+        <div className="vm-eyebrow" style={{ marginBottom: 12 }}>Try a query</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left' }}>
+          {suggestedQueries.slice(0, 4).map((q, i) => (
+            <button
+              key={i}
+              onClick={() => onPickQuery(q)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '12px 14px',
+                background: 'var(--panel)', border: '1px solid var(--rule)',
+                borderRadius: 8,
+                color: 'var(--ink-soft)',
+                fontSize: 14, fontFamily: 'var(--serif)',
+                lineHeight: 1.4, letterSpacing: '-0.005em',
+                transition: 'all 120ms', textAlign: 'left',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--accent)'
+                e.currentTarget.style.color = 'var(--ink)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--rule)'
+                e.currentTarget.style.color = 'var(--ink-soft)'
+              }}
+            >
+              <span className="vm-mono" style={{ fontSize: 10, color: 'var(--faint)', width: 16 }}>
+                0{i + 1}
+              </span>
+              <span style={{ flex: 1 }}>{q}</span>
+              <IconChevRight size={14} sw={2} style={{ color: 'var(--faint)' }} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── AnswerPanel ────────────────────────────────────────────────────────────
-export function AnswerPanel() {
-  const { result, isStreaming, setSelectedChunkId, setQuery, errorMessage } = useStore()
+export function AnswerPanel({
+  query,
+  suggestedQueries,
+  onCiteClick,
+  onPickQuery,
+}: {
+  query: string
+  suggestedQueries: string[]
+  onCiteClick: (c: string) => void
+  onPickQuery: (q: string) => void
+}) {
+  const { result, isStreaming, errorMessage } = useStore()
 
-  const displayText = result?.answer ?? ''
-
-  function handleCiteClick(citation: string) {
-    const chunks = result?.chunks ?? []
-    const idx = chunks.findIndex((c) => c.citation === citation)
-    if (idx >= 0) {
-      const id = chunks[idx].chunk_id
-      setSelectedChunkId(id)
-      document.getElementById(`chunk-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
+  if (!result && !isStreaming && !errorMessage) {
+    return <EmptyState suggestedQueries={suggestedQueries} onPickQuery={onPickQuery} />
   }
 
-  if (errorMessage && !isStreaming) {
+  if (errorMessage) {
     return (
-      <div style={{
-        height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32,
-      }}>
+      <div style={{ height: '100%', display: 'grid', placeItems: 'center', padding: 32 }}>
         <div style={{
-          display: 'flex', gap: 12, padding: '16px 20px', borderRadius: 10,
-          border: '1px solid var(--error)', background: 'var(--error-soft)',
-          maxWidth: 520,
+          maxWidth: 480, padding: '18px 22px',
+          border: '1px solid var(--error)', borderRadius: 8,
+          background: 'var(--error-soft)',
         }}>
-          <div style={{ color: 'var(--error)', flexShrink: 0, paddingTop: 1 }}>
-            <IconX size={16} sw={2} />
+          <div style={{
+            fontFamily: 'var(--serif)', fontSize: 20, fontStyle: 'italic',
+            color: 'var(--error)', marginBottom: 4,
+          }}>
+            Something went wrong
           </div>
-          <div>
-            <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 600, color: 'var(--error)' }}>Error</p>
-            <p className="vm-mono" style={{ margin: 0, fontSize: 11, color: 'var(--error)' }}>{errorMessage}</p>
-          </div>
+          <p className="vm-mono" style={{ margin: 0, fontSize: 12, color: 'var(--ink-soft)' }}>
+            {errorMessage}
+          </p>
         </div>
       </div>
     )
   }
 
-  if (!displayText && !isStreaming) {
-    return <EmptyState onSuggest={(q) => setQuery(q)} />
-  }
-
-  const paragraphs = displayText.split(/\n\n+/).filter(Boolean)
+  const displayText = result?.answer ?? ''
+  const citations   = result?.citations ?? []
+  const citeMap     = buildCiteMap(citations)
+  const paragraphs  = displayText.split(/\n\n+/).filter(Boolean)
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', padding: '28px 32px 48px' }}>
-      <div style={{ maxWidth: 660 }}>
+    <div style={{ height: '100%', overflowY: 'auto' }}>
+      <div style={{
+        maxWidth: 720, margin: '0 auto',
+        padding: 'clamp(28px, 4vw, 56px) clamp(24px, 4vw, 56px) 80px',
+      }}>
+        {/* Question echo */}
+        {query && (
+          <div style={{ marginBottom: 36 }} className="vm-fadeup">
+            <div className="vm-eyebrow" style={{ marginBottom: 8 }}>Question</div>
+            <div style={{
+              fontFamily: 'var(--serif)', fontStyle: 'italic',
+              fontSize: 22, lineHeight: 1.35, color: 'var(--ink-soft)',
+              letterSpacing: '-0.005em',
+            }}>
+              {query}
+            </div>
+          </div>
+        )}
+
+        {/* Toolbar */}
+        {result && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24,
+            paddingBottom: 12, borderBottom: '1px solid var(--rule)',
+          }}>
+            <span className="vm-eyebrow">Answer</span>
+            <span style={{ flex: 1 }} />
+            <ToolbarButton label="Copy"><IconCopy size={13} sw={2} /></ToolbarButton>
+            <ToolbarButton label="Save"><IconBookmark size={13} sw={2} /></ToolbarButton>
+            <ToolbarButton label="Re-run"><IconRefresh size={13} sw={2} /></ToolbarButton>
+          </div>
+        )}
+
+        {/* Streaming placeholder */}
         {isStreaming && !displayText && (
           <div style={{
-            fontFamily: 'var(--serif)', fontSize: 16, color: 'var(--muted)',
-          }} className="vm-caret" />
+            color: 'var(--muted)', fontFamily: 'var(--serif)',
+            fontSize: 21, fontStyle: 'italic',
+          }}>
+            <span className="vm-pulse">Composing answer</span>
+            <StreamingCaret />
+          </div>
         )}
 
-        {paragraphs.map((para, i) => (
-          <AnnotatedParagraph
-            key={i}
-            text={para}
-            citations={result?.citations ?? []}
-            onCiteClick={handleCiteClick}
-            isFirst={i === 0}
-          />
-        ))}
+        {/* Prose body */}
+        <div className="vm-prose">
+          {paragraphs.map((para, i) => (
+            <AnnotatedParagraph
+              key={i}
+              text={para}
+              citeMap={citeMap}
+              onCiteClick={onCiteClick}
+              isFirst={i === 0}
+            />
+          ))}
+          {isStreaming && displayText && <StreamingCaret />}
+        </div>
 
-        {result && (
-          <>
-            <SourcesStrip result={result} onCiteClick={handleCiteClick} />
-            <VerificationMark result={result} />
-          </>
-        )}
+        {result && <VerificationMark result={result} />}
+        {result && <SourcesStrip result={result} onCiteClick={onCiteClick} />}
+        {result && <FollowUps items={suggestedQueries} onPick={onPickQuery} />}
       </div>
     </div>
   )

@@ -4,18 +4,17 @@ import { useStore } from '../store'
 import type { ChunkOut } from '../types'
 import type { AgentEvent, NodeEndData } from '../types/ws'
 
-// Node display labels
 const NODE_LABELS: Record<string, string> = {
-  route: 'Route',
-  retrieve: 'Retrieve',
-  rerank: 'Rerank',
-  grade: 'Grade',
-  rewrite: 'Rewrite',
-  generate: 'Generate',
-  check: 'Faithfulness Check',
+  route:          'Route',
+  retrieve:       'Retrieve',
+  rerank:         'Rerank',
+  grade:          'Grade',
+  rewrite:        'Rewrite',
+  generate:       'Generate',
+  check:          'Faithfulness Check',
   increment_regen: 'Regen Counter',
   summarize_gate: 'Summarize Gate',
-  summarize: 'Summarize',
+  summarize:      'Summarize',
 }
 
 export function useAgentStream() {
@@ -24,6 +23,7 @@ export function useAgentStream() {
     threadId,
     pipeline,
     query,
+    setActiveQuery,
     setStreaming,
     setTimeline,
     updateNode,
@@ -35,11 +35,12 @@ export function useAgentStream() {
     setErrorMessage,
   } = useStore()
 
-  const send = useCallback(() => {
-    if (ws.current) {
-      ws.current.close()
-    }
+  const send = useCallback((overrideQuery?: string) => {
+    const q = overrideQuery !== undefined ? overrideQuery : query
 
+    if (ws.current) ws.current.close()
+
+    setActiveQuery(q)
     setTimeline([])
     clearLiveChunks()
     setResult(null)
@@ -51,7 +52,7 @@ export function useAgentStream() {
     ws.current = socket
 
     socket.onopen = () => {
-      socket.send(JSON.stringify({ query, thread_id: threadId, pipeline }))
+      socket.send(JSON.stringify({ query: q, thread_id: threadId, pipeline }))
     }
 
     socket.onmessage = (msg: MessageEvent) => {
@@ -97,8 +98,8 @@ export function useAgentStream() {
           const score = d.relevance_score ?? 0
           summary = `score: ${score.toFixed(2)} · ${(d.relevant ?? score >= 0.6) ? 'relevant' : 'insufficient'}`
         } else if (ev.node === 'rewrite') {
-          const q = d.new_query ?? ''
-          summary = q.slice(0, 60) + (q.length > 60 ? '…' : '')
+          const nq = d.new_query ?? ''
+          summary = nq.slice(0, 60) + (nq.length > 60 ? '…' : '')
         } else if (ev.node === 'generate') {
           summary = 'answer generated'
         } else if (ev.node === 'check') {
@@ -145,7 +146,7 @@ export function useAgentStream() {
     }
   }, [
     query, threadId, pipeline,
-    setStreaming, setTimeline, updateNode, pushNode,
+    setActiveQuery, setStreaming, setTimeline, updateNode, pushNode,
     pushLiveChunk, clearLiveChunks,
     setResult, setSelectedChunkId, setErrorMessage,
   ])

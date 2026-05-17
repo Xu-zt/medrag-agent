@@ -96,4 +96,5 @@ export interface TimelineNode {
   summary: string
   detail?: NodeEndData
   timestamp?: number
+  elapsed_ms?: number
 }

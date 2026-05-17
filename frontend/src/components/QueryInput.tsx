@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { useAgentStream } from '../hooks/useAgentStream'
-import { fetchCorpusStats, loadRecentThreads, saveThread } from '../api/client'
+import { fetchCorpusStats, saveThread } from '../api/client'
 import type { CorpusStats } from '../types'
 
-// ── SVG icons ──────────────────────────────────────────────────────────────
+// ── SVG icons ─────────────────────────────────────────────────────────────
 function I({ size = 16, sw = 1.6, children }: { size?: number; sw?: number; children: React.ReactNode }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -14,196 +14,197 @@ function I({ size = 16, sw = 1.6, children }: { size?: number; sw?: number; chil
     </svg>
   )
 }
-const IconSend   = (p: { size?: number; sw?: number }) => <I {...p}><path d="M22 2 11 13M22 2 15 22l-4-9-9-4 20-7Z"/></I>
-const IconStop   = (p: { size?: number; sw?: number }) => <I {...p}><rect x="6" y="6" width="12" height="12" rx="2"/></I>
-const IconDB     = (p: { size?: number; sw?: number }) => <I {...p}><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></I>
+const IconArrowUp  = (p: { size?: number; sw?: number }) => <I {...p}><path d="M12 19V5M6 11l6-6 6 6"/></I>
+const IconStop     = (p: { size?: number; sw?: number }) => <I {...p}><rect x="6" y="6" width="12" height="12" rx="1.5"/></I>
+const IconDatabase = (p: { size?: number; sw?: number }) => <I {...p}><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></I>
+const IconLightning = (p: { size?: number; sw?: number }) => <I {...p}><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></I>
+const IconNetwork  = (p: { size?: number; sw?: number }) => <I {...p}><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8 7 16 17M16 7 8 17"/></I>
 
 // ── Pipeline toggle ────────────────────────────────────────────────────────
 function PipelineToggle({ value, onChange, disabled }: {
   value: 'p2' | 'p3'; onChange: (v: 'p2' | 'p3') => void; disabled: boolean
 }) {
-  const opts: { id: 'p2' | 'p3'; label: string; hint: string }[] = [
-    { id: 'p2', label: 'Hybrid', hint: 'Dense + sparse retrieval' },
-    { id: 'p3', label: 'Reranked', hint: 'BGE-reranker post-processing' },
+  const options: { id: 'p2' | 'p3'; label: string; sub: string; icon: React.FC<{ size?: number; sw?: number }>; hint: string }[] = [
+    { id: 'p2', label: 'Hybrid',   sub: 'p2', icon: IconLightning, hint: 'Fast · dense+sparse retrieval' },
+    { id: 'p3', label: 'Reranked', sub: 'p3', icon: IconNetwork,   hint: 'Precise · BGE-reranker post-processing' },
   ]
   return (
     <div style={{
-      display: 'inline-flex', borderRadius: 6, overflow: 'hidden',
-      border: '1px solid var(--rule)', background: 'var(--panel-2)',
+      display: 'inline-flex', alignItems: 'center',
+      padding: 2, gap: 2,
+      background: 'var(--panel-2)',
+      border: '1px solid var(--rule-soft)',
+      borderRadius: 7,
     }}>
-      {opts.map((o) => (
-        <button
-          key={o.id}
-          title={o.hint}
-          disabled={disabled}
-          onClick={() => onChange(o.id)}
-          style={{
-            padding: '5px 12px', border: 'none', fontSize: 11, fontWeight: 600,
-            letterSpacing: '0.01em',
-            background: value === o.id ? 'var(--panel)' : 'transparent',
-            color: value === o.id ? 'var(--ink)' : 'var(--muted)',
-            boxShadow: value === o.id ? 'var(--shadow-sm)' : 'none',
-            transition: 'all 120ms', cursor: disabled ? 'not-allowed' : 'pointer',
-            opacity: disabled ? 0.5 : 1,
-          }}
-        >
-          {o.label}
-        </button>
-      ))}
+      {options.map((o) => {
+        const active = value === o.id
+        const Glyph = o.icon
+        return (
+          <button
+            key={o.id}
+            onClick={() => onChange(o.id)}
+            disabled={disabled}
+            title={o.hint}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '5px 9px',
+              borderRadius: 5, border: 'none',
+              background: active ? 'var(--panel)' : 'transparent',
+              boxShadow: active ? '0 1px 2px oklch(50% 0.02 80 / 0.10)' : 'none',
+              color: active ? 'var(--ink)' : 'var(--muted)',
+              fontSize: 11, fontWeight: 600, letterSpacing: '0.005em',
+              transition: 'all 120ms',
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              opacity: disabled ? 0.5 : 1,
+            }}
+          >
+            <Glyph size={11} sw={2} />
+            {o.label}
+            <span className="vm-mono" style={{ fontSize: 9.5, color: 'var(--faint)', fontWeight: 500 }}>
+              {o.sub}
+            </span>
+          </button>
+        )
+      })}
     </div>
   )
 }
 
-// ── QueryInput ────────────────────────────────────────────────────────────
+// ── Thread pill ────────────────────────────────────────────────────────────
+function ThreadPill({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '5px 9px',
+      border: '1px solid var(--rule-soft)',
+      borderRadius: 6,
+      fontSize: 11, color: 'var(--muted)',
+    }}>
+      <span className="vm-eyebrow" style={{ fontSize: 9, letterSpacing: '0.12em' }}>Thread</span>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: 92, border: 'none', outline: 'none', background: 'transparent',
+          fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-soft)', fontWeight: 600,
+        }}
+      />
+    </div>
+  )
+}
+
+// ── QueryInput ─────────────────────────────────────────────────────────────
 export function QueryInput() {
-  const {
-    query, setQuery,
-    threadId, setThreadId,
-    pipeline, setPipeline,
-    isStreaming,
-  } = useStore()
+  const { query, setQuery, threadId, setThreadId, pipeline, setPipeline, isStreaming } = useStore()
   const { send, cancel } = useAgentStream()
   const [stats, setStats] = useState<CorpusStats | null>(null)
-  const [threads, setThreads] = useState<string[]>([])
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [focused, setFocused] = useState(false)
+  const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     fetchCorpusStats().then(setStats).catch(() => null)
   }, [])
 
-  useEffect(() => {
-    setThreads(loadRecentThreads())
-  }, [])
-
   // Auto-grow textarea
   useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+    const ta = taRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(160, Math.max(24, ta.scrollHeight)) + 'px'
   }, [query])
 
-  function handleSend() {
-    if (!isStreaming && query.trim()) {
-      saveThread(threadId)
-      setThreads(loadRecentThreads())
-      send()
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+  function handleKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      if (!isStreaming && query.trim()) {
+        saveThread(threadId)
+        send()
+      }
     }
   }
 
-  const canSend = !isStreaming && Boolean(query.trim())
+  const canSend = query.trim().length > 0 && !isStreaming
 
   return (
     <div style={{
-      borderTop: '1px solid var(--rule)',
-      background: 'var(--panel)',
-      padding: '14px 20px 16px',
+      padding: '14px 32px 20px',
+      background: 'var(--canvas)',
       flexShrink: 0,
     }}>
-      {/* Corpus stats bar */}
-      {stats && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          marginBottom: 10, fontSize: 10,
-          color: 'var(--faint)',
-        }}>
-          <IconDB size={10} sw={1.8} />
-          <span className="vm-mono">
-            {stats.total_chunks.toLocaleString()} chunks ·{' '}
-            {stats.pubmed_chunks.toLocaleString()} PubMed ·{' '}
-            {stats.pmc_chunks.toLocaleString()} PMC ·{' '}
-            {stats.embedding_model}
-          </span>
-        </div>
-      )}
-
-      {/* Main composer row */}
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-        <div style={{
-          flex: 1,
-          border: '1px solid var(--rule)',
-          borderRadius: 10,
-          background: 'var(--canvas)',
-          transition: 'box-shadow 160ms',
-          display: 'flex', flexDirection: 'column',
-        }}
-          onFocusCapture={(e) => e.currentTarget.style.boxShadow = '0 0 0 3px var(--accent-soft), var(--shadow-sm)'}
-          onBlurCapture={(e) => e.currentTarget.style.boxShadow = ''}
-        >
+      <div style={{
+        maxWidth: 1200, margin: '0 auto',
+        background: 'var(--panel)',
+        border: `1px solid ${focused ? 'var(--accent)' : 'var(--rule)'}`,
+        borderRadius: 12,
+        transition: 'border-color 160ms, box-shadow 160ms',
+        boxShadow: focused
+          ? '0 0 0 4px var(--accent-soft), var(--shadow-float)'
+          : 'var(--shadow-float)',
+      }}>
+        {/* Textarea */}
+        <div style={{ padding: '14px 18px 6px' }}>
           <textarea
-            ref={textareaRef}
-            rows={2}
+            ref={taRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
+            onKeyDown={handleKey}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             disabled={isStreaming}
-            placeholder="Ask a medical question… (Ctrl+Enter to send)"
+            rows={1}
+            placeholder="Ask a clinical question — enter to send, shift+enter for a new line"
             style={{
-              width: '100%', resize: 'none', border: 'none', outline: 'none',
-              background: 'transparent',
-              fontFamily: 'var(--serif)', fontSize: 16,
-              color: 'var(--ink)', letterSpacing: '-0.005em',
-              padding: '12px 14px 8px',
-              lineHeight: 1.5,
-              minHeight: 52, maxHeight: 200,
+              width: '100%', resize: 'none',
+              border: 'none', outline: 'none', background: 'transparent',
+              fontFamily: 'var(--serif)',
+              fontSize: 18, lineHeight: 1.4,
+              color: 'var(--ink)',
+              letterSpacing: '-0.005em',
+              minHeight: 24, maxHeight: 160,
             }}
           />
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '6px 10px 8px',
-            borderTop: '1px solid var(--rule-soft)',
-          }}>
-            <PipelineToggle value={pipeline} onChange={setPipeline} disabled={isStreaming} />
-
-            {/* Thread selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 4 }}>
-              <span className="vm-eyebrow" style={{ fontSize: 8 }}>Thread</span>
-              <input
-                list="thread-history"
-                value={threadId}
-                onChange={(e) => setThreadId(e.target.value)}
-                disabled={isStreaming}
-                style={{
-                  fontFamily: 'var(--mono)', fontSize: 10,
-                  color: 'var(--ink-soft)', background: 'transparent',
-                  border: '1px solid var(--rule-soft)', borderRadius: 4,
-                  padding: '3px 7px', outline: 'none', width: 160,
-                }}
-              />
-              {threads.length > 0 && (
-                <datalist id="thread-history">
-                  {threads.map((t) => <option key={t} value={t} />)}
-                </datalist>
-              )}
-            </div>
-
-            <div style={{ flex: 1 }} />
-            <span className="vm-mono" style={{ fontSize: 9, color: 'var(--faint)' }}>⌃↵ send</span>
-          </div>
         </div>
 
-        {/* Send / Stop */}
-        <button
-          onClick={isStreaming ? cancel : handleSend}
-          disabled={!isStreaming && !canSend}
-          style={{
-            width: 44, height: 44, borderRadius: 10, border: 'none',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            background: isStreaming ? 'var(--error)' : canSend ? 'var(--ink)' : 'var(--rule)',
-            color: isStreaming || canSend ? 'var(--canvas)' : 'var(--faint)',
-            transition: 'background 160ms',
-            cursor: !isStreaming && !canSend ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {isStreaming ? <IconStop size={16} sw={2} /> : <IconSend size={15} sw={2} />}
-        </button>
+        {/* Controls strip */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '8px 12px 10px 14px',
+          borderTop: '1px solid var(--rule-soft)',
+        }}>
+          <PipelineToggle value={pipeline} onChange={setPipeline} disabled={isStreaming} />
+          <ThreadPill value={threadId} onChange={setThreadId} />
+
+          {stats && (
+            <span className="vm-mono" style={{
+              marginLeft: 'auto',
+              fontSize: 10.5, color: 'var(--faint)',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+              <IconDatabase size={11} sw={2} />
+              {stats.total_chunks.toLocaleString()} chunks · {stats.embedding_model}
+            </span>
+          )}
+
+          <button
+            onClick={isStreaming ? cancel : () => { if (canSend) { saveThread(threadId); send() } }}
+            disabled={!isStreaming && !canSend}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '7px 12px 7px 14px',
+              borderRadius: 8, border: '1px solid transparent',
+              background: isStreaming ? 'var(--error)' : canSend ? 'var(--ink)' : 'var(--rule)',
+              color: isStreaming ? 'white' : canSend ? 'var(--canvas)' : 'var(--faint)',
+              fontSize: 12, fontWeight: 600, letterSpacing: '0.01em',
+              cursor: isStreaming || canSend ? 'pointer' : 'not-allowed',
+              transition: 'all 120ms',
+              marginLeft: stats ? 0 : 'auto',
+            }}
+          >
+            {isStreaming
+              ? <><IconStop size={11} sw={2.2} /> Stop</>
+              : <>Send <IconArrowUp size={11} sw={2.4} /></>}
+          </button>
+        </div>
       </div>
     </div>
   )
