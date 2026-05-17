@@ -37,7 +37,7 @@ export function AnswerPage() {
       <div style={{
         flex: 1,
         display: 'grid',
-        gridTemplateColumns: '260px minmax(0, 1fr) 360px',
+        gridTemplateColumns: 'minmax(260px, 1fr) minmax(0, 2fr) minmax(300px, 1.2fr)',
         overflow: 'hidden',
       }}>
         {/* Left: Reasoning trace */}
