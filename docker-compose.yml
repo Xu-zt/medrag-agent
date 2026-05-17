@@ -2,9 +2,11 @@ version: "3.9"
 
 # MedRAG-Agent — one-command local deployment
 # Usage:
-#   docker compose up -d          # start all services
-#   docker compose logs -f ui     # follow UI logs
-#   docker compose down           # stop all
+#   docker compose up -d            # start all services
+#   docker compose logs -f frontend # follow frontend logs
+#   docker compose down             # stop all
+#
+# Open http://localhost:5173 in your browser.
 
 services:
 
@@ -48,19 +50,17 @@ services:
       retries: 10
       start_period: 60s
 
-  # ── Streamlit UI ──────────────────────────────────────────────────────────────
-  ui:
+  # ── FastAPI backend ───────────────────────────────────────────────────────────
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: medrag-ui
+    container_name: medrag-backend
     restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "8000:8000"
     volumes:
-      # Mount corpus data so the container can access the index
       - ./data:/app/data:ro
-      # Mount model cache to avoid re-downloading BGE-M3 each restart
       - model_cache:/root/.cache/huggingface
     environment:
       - QDRANT_URL=http://qdrant:6333
@@ -69,10 +69,29 @@ services:
       qdrant:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/healthz"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 30s
+
+  # ── React frontend ────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medrag-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   qdrant_data:

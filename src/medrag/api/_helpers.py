@@ -44,6 +44,20 @@ def payload_to_chunk(payload: dict[str, Any], score: float | None = None) -> Chu
 
     ext_url = external_url(source, doc_id, pmid)
 
+    # Bibliographic metadata stored by chunker (PubMed only)
+    raw_authors = payload.get("authors")
+    if isinstance(raw_authors, list):
+        authors: str | None = ", ".join(str(a) for a in raw_authors) or None
+    elif isinstance(raw_authors, str):
+        authors = raw_authors or None
+    else:
+        authors = None
+
+    journal: str | None = payload.get("journal") or None
+
+    raw_year = payload.get("year")
+    year: int | None = int(raw_year) if raw_year is not None else None
+
     return ChunkOut(
         chunk_id=chunk_id,
         citation=citation,
@@ -58,6 +72,9 @@ def payload_to_chunk(payload: dict[str, Any], score: float | None = None) -> Chu
         score=score,
         highlight_ranges=[],
         external_url=ext_url,
+        authors=authors,
+        journal=journal,
+        year=year,
     )
 
 

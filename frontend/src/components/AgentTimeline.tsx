@@ -1,100 +1,160 @@
-import clsx from 'clsx'
-import { CheckCircle, Circle, AlertCircle, RefreshCw, Loader2, XCircle } from 'lucide-react'
+import React from 'react'
 import { useStore } from '../store'
 import type { TimelineNode } from '../types/ws'
 
-const STATUS_ICON: Record<string, React.ReactNode> = {
-  waiting: <Circle size={16} className="text-slate-400" />,
-  running: <Loader2 size={16} className="text-blue-500 animate-spin" />,
-  done: <CheckCircle size={16} className="text-emerald-500" />,
-  rewrite: <RefreshCw size={16} className="text-amber-500" />,
-  error: <XCircle size={16} className="text-rose-500" />,
+// ── SVG icon helpers ────────────────────────────────────────────────────────
+function I({ size = 16, sw = 1.6, children, style }: {
+  size?: number; sw?: number; children: React.ReactNode; style?: React.CSSProperties
+}) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={sw} strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true" style={style}>
+      {children}
+    </svg>
+  )
+}
+const IconCheck   = (p: { size?: number; sw?: number; style?: React.CSSProperties }) => <I {...p}><path d="m5 12 4 4L19 7"/></I>
+const IconAlert   = (p: { size?: number; sw?: number; style?: React.CSSProperties }) => <I {...p}><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></I>
+const IconRefresh = (p: { size?: number; sw?: number; style?: React.CSSProperties }) => <I {...p}><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.3L3 16M3 21v-5h5"/></I>
+const IconSpinner = (p: { size?: number; sw?: number; style?: React.CSSProperties }) => <I {...p}><path d="M12 3a9 9 0 1 0 9 9"/></I>
+const IconQuote   = (p: { size?: number; sw?: number; style?: React.CSSProperties }) => <I {...p}><path d="M3 21V13c0-4 2-6 6-6M13 21V13c0-4 2-6 6-6"/></I>
+
+function StatusDot({ status }: { status: string }) {
+  const base: React.CSSProperties = {
+    width: 22, height: 22, borderRadius: 6,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0,
+  }
+  if (status === 'done') {
+    return (
+      <div style={{ ...base, background: 'var(--verified-soft)', color: 'var(--verified)' }}>
+        <IconCheck size={12} sw={2.4} />
+      </div>
+    )
+  }
+  if (status === 'running') {
+    return (
+      <div style={{ ...base, background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+        <span className="vm-spin" style={{ display: 'inline-flex' }}>
+          <IconSpinner size={12} sw={2.4} />
+        </span>
+      </div>
+    )
+  }
+  if (status === 'rewrite') {
+    return (
+      <div style={{ ...base, background: 'var(--warn-soft)', color: 'var(--warn)' }}>
+        <IconRefresh size={12} sw={2.4} />
+      </div>
+    )
+  }
+  if (status === 'error') {
+    return (
+      <div style={{ ...base, background: 'var(--error-soft)', color: 'var(--error)' }}>
+        <IconAlert size={12} sw={2.4} />
+      </div>
+    )
+  }
+  return (
+    <div style={{ ...base, background: 'var(--panel-2)', color: 'var(--faint)', border: '1px solid var(--rule)' }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
+    </div>
+  )
 }
 
-const STATUS_LINE: Record<string, string> = {
-  waiting: 'bg-slate-300',
-  running: 'bg-blue-400',
-  done: 'bg-emerald-400',
-  rewrite: 'bg-amber-400',
-  error: 'bg-rose-400',
-}
-
-function NodeCard({ node, isLast }: { node: TimelineNode; isLast: boolean }) {
-  const rewriteDetail = node.name === 'rewrite' && node.detail
-  const gradeDetail = node.name === 'grade' && node.detail
+function TraceNode({ node, isLast, isActive }: {
+  node: TimelineNode; isLast: boolean; isActive: boolean
+}) {
+  const gradeDetail   = node.name === 'grade'   ? (node.detail as { relevance_score?: number } | null) : null
+  const rewriteDetail = node.name === 'rewrite'  ? (node.detail as { original?: string; new_query?: string } | null) : null
+  const checkDetail   = node.name === 'check'    ? (node.detail as { faithful?: boolean } | null) : null
 
   return (
-    <div className="flex gap-3">
-      {/* Vertical connector */}
-      <div className="flex flex-col items-center">
-        <div className="mt-1">{STATUS_ICON[node.status]}</div>
+    <div style={{ display: 'flex', gap: 12, position: 'relative' }} className="vm-fadeup">
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+        <StatusDot status={node.status} />
         {!isLast && (
-          <div className={clsx('w-px flex-1 mt-1', STATUS_LINE[node.status])} />
+          <div style={{
+            width: 1, flex: 1, marginTop: 4, marginBottom: -4, minHeight: 12,
+            background: node.status === 'done' ? 'var(--rule)' : 'var(--rule-soft)',
+          }} />
         )}
       </div>
 
-      {/* Card body */}
-      <div className="pb-4 flex-1 min-w-0">
-        <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold text-slate-700">{node.label}</span>
-          {node.status === 'running' && (
-            <span className="text-xs text-slate-400 animate-pulse">running…</span>
+      <div style={{ paddingBottom: 16, flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, justifyContent: 'space-between' }}>
+          <span style={{
+            fontSize: 13, fontWeight: 600,
+            color: isActive ? 'var(--ink)' : 'var(--ink-soft)',
+            letterSpacing: '-0.005em',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            flex: '1 1 auto', minWidth: 0,
+          }}>
+            {node.label}
+          </span>
+          {node.timestamp != null && (
+            <span className="vm-mono" style={{ fontSize: 10, color: 'var(--faint)', flexShrink: 0 }}>
+              {new Date(node.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
           )}
         </div>
 
         {node.summary && (
-          <p className="text-xs text-slate-500 mt-0.5 truncate">{node.summary}</p>
+          <p style={{ margin: '3px 0 0 0', fontSize: 12, lineHeight: 1.5, color: 'var(--muted)' }}>
+            {node.summary}
+          </p>
         )}
 
-        {/* Grade score bar */}
-        {gradeDetail && node.status === 'done' && (
-          <div className="mt-1.5">
-            <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className={clsx(
-                  'h-full rounded-full transition-all',
-                  (gradeDetail as { relevance_score?: number }).relevance_score! >= 0.6
-                    ? 'bg-emerald-400'
-                    : 'bg-amber-400',
-                )}
-                style={{
-                  width: `${((gradeDetail as { relevance_score?: number }).relevance_score ?? 0) * 100}%`,
-                }}
-              />
+        {/* Relevance bar */}
+        {node.name === 'grade' && node.status === 'done' && gradeDetail?.relevance_score != null && (
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--rule-soft)', overflow: 'hidden' }}>
+              <div style={{
+                width: `${gradeDetail.relevance_score * 100}%`, height: '100%',
+                background: gradeDetail.relevance_score >= 0.6 ? 'var(--verified)' : 'var(--warn)',
+              }} />
             </div>
+            <span className="vm-mono" style={{ fontSize: 10, color: 'var(--ink-soft)', fontWeight: 600 }}>
+              {gradeDetail.relevance_score.toFixed(2)}
+            </span>
           </div>
         )}
 
         {/* Rewrite diff */}
-        {rewriteDetail && (
-          <div className="mt-1.5 space-y-1 text-xs">
-            <div className="bg-rose-50 border border-rose-200 rounded px-2 py-1 font-mono text-rose-700 truncate">
-              − {String((rewriteDetail as Record<string, unknown>)['rewritten_queries'] instanceof Array
-                ? ''
-                : '')}
-            </div>
-            <div className="bg-emerald-50 border border-emerald-200 rounded px-2 py-1 font-mono text-emerald-700 truncate">
-              + {String((rewriteDetail as { new_query?: unknown }).new_query ?? '')}
+        {node.name === 'rewrite' && node.status !== 'waiting' && rewriteDetail?.new_query && (
+          <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.5, fontFamily: 'var(--mono)' }}>
+            {rewriteDetail.original && (
+              <div style={{
+                padding: '5px 8px', borderRadius: 4,
+                background: 'var(--panel-2)', border: '1px solid var(--rule-soft)',
+                color: 'var(--muted)', textDecoration: 'line-through',
+                textDecorationColor: 'var(--faint)', marginBottom: 4,
+              }}>
+                {rewriteDetail.original}
+              </div>
+            )}
+            <div style={{
+              padding: '5px 8px', borderRadius: 4,
+              background: 'var(--accent-soft)', border: '1px solid var(--accent-soft)',
+              color: 'var(--accent-ink)',
+            }}>
+              {rewriteDetail.new_query}
             </div>
           </div>
         )}
 
         {/* Check result */}
-        {node.name === 'check' && node.status === 'done' && node.detail && (
-          <div className={clsx(
-            'mt-1.5 flex items-center gap-1.5 text-xs px-2 py-1 rounded',
-            (node.detail as { faithful?: boolean }).faithful
-              ? 'bg-emerald-50 text-emerald-700'
-              : 'bg-amber-50 text-amber-700',
-          )}>
-            {(node.detail as { faithful?: boolean }).faithful
-              ? <CheckCircle size={12} />
-              : <AlertCircle size={12} />}
-            <span>
-              {(node.detail as { faithful?: boolean }).faithful
-                ? 'All claims supported'
-                : (node.detail as { issues?: string }).issues?.slice(0, 80) || 'Issues found'}
-            </span>
+        {node.name === 'check' && node.status === 'done' && checkDetail && (
+          <div style={{
+            marginTop: 8, padding: '6px 8px', borderRadius: 6,
+            background: checkDetail.faithful ? 'var(--verified-soft)' : 'var(--warn-soft)',
+            color: checkDetail.faithful ? 'var(--verified)' : 'var(--warn)',
+            fontSize: 11, fontWeight: 600, letterSpacing: '0.01em',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+            {checkDetail.faithful ? <IconCheck size={11} sw={2.4} /> : <IconAlert size={11} sw={2.4} />}
+            {checkDetail.faithful ? 'All claims supported' : 'Unsupported claims'}
           </div>
         )}
       </div>
@@ -103,45 +163,70 @@ function NodeCard({ node, isLast }: { node: TimelineNode; isLast: boolean }) {
 }
 
 export function AgentTimeline() {
-  const { timeline, isStreaming } = useStore()
+  const { timeline, isStreaming, result } = useStore()
 
-  if (timeline.length === 0 && !isStreaming) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center text-slate-400 p-4 text-center">
-        <Circle size={24} className="mb-3 opacity-40" />
-        <p className="text-sm">Reasoning steps will appear here</p>
-      </div>
-    )
-  }
+  const activeIdx = timeline.findIndex((n) => n.status === 'running')
+  const empty = timeline.length === 0 && !isStreaming
 
-  const lastNode = timeline[timeline.length - 1]
-  const waitingForNextNode = isStreaming && (!lastNode || lastNode.status !== 'running')
+  const threadTitle = result
+    ? result.answer.slice(0, 70) + (result.answer.length > 70 ? '…' : '')
+    : timeline.length > 0 ? 'Reasoning in progress…' : ''
 
   return (
-    <div className="h-full overflow-y-auto p-4 space-y-0">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
-        Reasoning Process
-      </h2>
-      {timeline.map((node, i) => (
-        <NodeCard key={`${node.name}-${i}`} node={node} isLast={i === timeline.length - 1 && !waitingForNextNode} />
-      ))}
-      {waitingForNextNode && (
-        <div className="flex gap-3 pt-1">
-          <div className="flex flex-col items-center">
-            <Loader2 size={16} className="text-blue-400 animate-spin mt-1" />
-          </div>
-          <div className="pb-4">
-            <span className="text-xs text-slate-400 animate-pulse">
-              {timeline.length === 0 ? 'Initialising…' : 'Loading models / retrieving…'}
-            </span>
-            {timeline.length > 0 && (
-              <p className="text-xs text-slate-300 mt-0.5">
-                First request loads BGE-M3 (~1 min on CPU)
-              </p>
-            )}
-          </div>
+    <aside style={{
+      height: '100%', overflowY: 'auto',
+      borderRight: '1px solid var(--rule)',
+      background: 'var(--canvas)',
+      display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{
+        padding: '18px 20px 14px', borderBottom: '1px solid var(--rule-soft)',
+        flexShrink: 0,
+      }}>
+        <div className="vm-eyebrow" style={{ marginBottom: 4 }}>Reasoning trace</div>
+        <div style={{
+          fontFamily: 'var(--serif)', fontSize: 15, lineHeight: 1.3,
+          color: 'var(--ink)', letterSpacing: '-0.01em',
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}>
+          {threadTitle || 'No active thread'}
         </div>
-      )}
-    </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, fontSize: 11 }}>
+          <span className="vm-mono" style={{ color: 'var(--faint)' }}>
+            {timeline.filter((n) => n.status === 'done').length}/{timeline.length || 7} steps
+          </span>
+        </div>
+      </div>
+
+      <div style={{ padding: '18px 20px', flex: 1 }}>
+        {empty && (
+          <div style={{ padding: '32px 8px', textAlign: 'center', color: 'var(--faint)', fontSize: 13 }}>
+            <IconQuote size={20} style={{ opacity: 0.4, marginBottom: 10 }} />
+            <p style={{ margin: 0, lineHeight: 1.55 }}>
+              Each step — query rewriting, retrieval, grading, drafting, verification — appears here as it runs.
+            </p>
+          </div>
+        )}
+
+        {timeline.map((node, i) => (
+          <TraceNode
+            key={`${node.name}-${i}`}
+            node={node}
+            isLast={i === timeline.length - 1 && !isStreaming}
+            isActive={i === activeIdx || (activeIdx === -1 && i === timeline.length - 1)}
+          />
+        ))}
+
+        {isStreaming && activeIdx === -1 && timeline.length === 0 && (
+          <div style={{ display: 'flex', gap: 12 }}>
+            <StatusDot status="running" />
+            <div style={{ paddingTop: 3, fontSize: 12, color: 'var(--muted)' }} className="vm-pulse">
+              Initialising pipeline…
+            </div>
+          </div>
+        )}
+      </div>
+    </aside>
   )
 }

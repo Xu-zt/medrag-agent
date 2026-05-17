@@ -5,26 +5,26 @@ import { QueryInput } from '../components/QueryInput'
 
 export function AnswerPage() {
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      {/* Three-column layout */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: Agent Timeline (280px) */}
-        <div className="w-70 flex-shrink-0 border-r border-slate-200 overflow-hidden">
-          <AgentTimeline />
-        </div>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{
+        flex: 1,
+        display: 'grid',
+        gridTemplateColumns: 'minmax(220px, 0.9fr) minmax(0, 2.5fr) minmax(300px, 1.1fr)',
+        overflow: 'hidden',
+      }}>
+        {/* Left: Reasoning trace */}
+        <AgentTimeline />
 
-        {/* Center: Answer Panel (flex-1) */}
-        <div className="flex-1 overflow-hidden">
+        {/* Center: Answer */}
+        <div style={{ overflow: 'hidden', borderRight: '1px solid var(--rule)' }}>
           <AnswerPanel />
         </div>
 
-        {/* Right: Evidence Panel (360px) */}
-        <div className="w-90 flex-shrink-0 border-l border-slate-200 overflow-hidden">
-          <EvidencePanel />
-        </div>
+        {/* Right: Evidence */}
+        <EvidencePanel />
       </div>
 
-      {/* Footer: Query Input */}
+      {/* Bottom: Composer */}
       <QueryInput />
     </div>
   )
