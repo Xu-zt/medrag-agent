@@ -63,8 +63,13 @@ function StatusDot({ status }: { status: string }) {
   )
 }
 
-function TraceNode({ node, isLast, isActive }: {
-  node: TimelineNode; isLast: boolean; isActive: boolean
+function fmtMs(ms: number) {
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
+function TraceNode({ node, isLast, isActive, cumMs }: {
+  node: TimelineNode; isLast: boolean; isActive: boolean; cumMs: number
 }) {
   const gradeDetail   = node.name === 'grade'   ? (node.detail as { relevance_score?: number } | null) : null
   const rewriteDetail = node.name === 'rewrite'  ? (node.detail as { original?: string; new_query?: string } | null) : null
@@ -93,9 +98,9 @@ function TraceNode({ node, isLast, isActive }: {
           }}>
             {node.label}
           </span>
-          {node.timestamp != null && (
+          {cumMs > 0 && (
             <span className="vm-mono" style={{ fontSize: 10, color: 'var(--faint)', flexShrink: 0 }}>
-              {new Date(node.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              +{fmtMs(cumMs)}
             </span>
           )}
         </div>
@@ -163,14 +168,18 @@ function TraceNode({ node, isLast, isActive }: {
 }
 
 export function AgentTimeline() {
-  const { timeline, isStreaming, result } = useStore()
+  const { timeline, isStreaming, activeQuery, result } = useStore()
 
-  const activeIdx = timeline.findIndex((n) => n.status === 'running')
-  const empty = timeline.length === 0 && !isStreaming
+  const activeIdx  = timeline.findIndex((n) => n.status === 'running')
+  const empty      = timeline.length === 0 && !isStreaming
+  const threadTitle = activeQuery || (result ? 'Latest answer' : '')
+  const totalMs     = timeline.reduce((s, n) => s + (n.elapsed_ms ?? 0), 0)
 
-  const threadTitle = result
-    ? result.answer.slice(0, 70) + (result.answer.length > 70 ? '…' : '')
-    : timeline.length > 0 ? 'Reasoning in progress…' : ''
+  // Cumulative elapsed time after each node
+  const cumStamps = timeline.reduce<number[]>((acc, n) => {
+    acc.push((acc[acc.length - 1] ?? 0) + (n.elapsed_ms ?? 0))
+    return acc
+  }, [])
 
   return (
     <aside style={{
@@ -185,10 +194,8 @@ export function AgentTimeline() {
       }}>
         <div className="vm-eyebrow" style={{ marginBottom: 4 }}>Reasoning trace</div>
         <div style={{
-          fontFamily: 'var(--serif)', fontSize: 15, lineHeight: 1.3,
+          fontFamily: 'var(--serif)', fontSize: 17, lineHeight: 1.25,
           color: 'var(--ink)', letterSpacing: '-0.01em',
-          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
         }}>
           {threadTitle || 'No active thread'}
         </div>
@@ -196,6 +203,11 @@ export function AgentTimeline() {
           <span className="vm-mono" style={{ color: 'var(--faint)' }}>
             {timeline.filter((n) => n.status === 'done').length}/{timeline.length || 7} steps
           </span>
+          {totalMs > 0 && (
+            <span className="vm-mono" style={{ color: 'var(--faint)' }}>
+              · {(totalMs / 1000).toFixed(2)}s total
+            </span>
+          )}
         </div>
       </div>
 
@@ -204,7 +216,8 @@ export function AgentTimeline() {
           <div style={{ padding: '32px 8px', textAlign: 'center', color: 'var(--faint)', fontSize: 13 }}>
             <IconQuote size={20} style={{ opacity: 0.4, marginBottom: 10 }} />
             <p style={{ margin: 0, lineHeight: 1.55 }}>
-              Each step — query rewriting, retrieval, grading, drafting, verification — appears here as it runs.
+              Each step of the agent's reasoning — query rewriting, retrieval, grading,
+              drafting, verification — appears here as it runs.
             </p>
           </div>
         )}
@@ -215,6 +228,7 @@ export function AgentTimeline() {
             node={node}
             isLast={i === timeline.length - 1 && !isStreaming}
             isActive={i === activeIdx || (activeIdx === -1 && i === timeline.length - 1)}
+            cumMs={cumStamps[i] ?? 0}
           />
         ))}
 
