@@ -47,6 +47,14 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+# sentence_transformers MUST be imported before qdrant_client and FlagEmbedding
+# to initialise PyTorch before the gRPC C++ runtime on Windows — avoids
+# STATUS_ACCESS_VIOLATION when BGEM3Embedder loads later in the verify phase.
+try:
+    import sentence_transformers  # noqa: F401
+except ImportError:
+    pass
+
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -246,15 +254,42 @@ def _lexical_leak_score(question: str, chunks_text: str) -> float:
 # ── Phase 1: Sample chunk clusters ────────────────────────────────────────────
 
 def phase_sample(n_candidates: int, seed: int = 42) -> None:
-    print(f"[sample] loading chunks from {CHUNKS_FILE}...", flush=True)
-    if not CHUNKS_FILE.exists():
-        raise SystemExit(f"[error] {CHUNKS_FILE} not found. Run 04_build_index.py first.")
-
+    # Load chunks from Qdrant (authoritative source — guarantees chunk_id matches index).
+    # Fall back to local CHUNKS_FILE only if Qdrant is unreachable.
+    print("[sample] loading chunks from Qdrant (authoritative source)...", flush=True)
     all_chunks: list[dict] = []
-    with CHUNKS_FILE.open(encoding="utf-8") as f:
-        for line in f:
-            all_chunks.append(json.loads(line))
-    print(f"[sample] total chunks: {len(all_chunks)}", flush=True)
+    try:
+        from qdrant_client import QdrantClient as _QC
+        _qc = _QC(url="http://localhost:6333", timeout=30)
+        offset = None
+        while True:
+            batch, offset = _qc.scroll(
+                "medrag_text",
+                limit=1000,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for p in batch:
+                pl = p.payload or {}
+                all_chunks.append({
+                    "chunk_id": pl.get("chunk_id", ""),
+                    "source":   pl.get("source", ""),
+                    "doc_id":   pl.get("doc_id", ""),
+                    "text":     pl.get("text", ""),
+                    "metadata": pl.get("metadata", {}),
+                })
+            if offset is None:
+                break
+        print(f"[sample] loaded {len(all_chunks)} chunks from Qdrant", flush=True)
+    except Exception as e:
+        print(f"[sample] Qdrant unavailable ({e}), falling back to {CHUNKS_FILE}", flush=True)
+        if not CHUNKS_FILE.exists():
+            raise SystemExit(f"[error] {CHUNKS_FILE} not found. Run 04_build_index.py first.")
+        with CHUNKS_FILE.open(encoding="utf-8") as f:
+            for line in f:
+                all_chunks.append(json.loads(line))
+        print(f"[sample] total chunks: {len(all_chunks)}", flush=True)
 
     def is_substantive(c: dict) -> bool:
         t = c.get("text", "").strip()
@@ -266,11 +301,21 @@ def phase_sample(n_candidates: int, seed: int = 42) -> None:
 
     # ── Group chunks by document ───────────────────────────────────────────────
     # Key: (source, doc_id)  →  list of chunk dicts
+    # PMC chunks often have doc_id=""; fall back to metadata['pmid'] or title hash.
     by_doc: dict[tuple, list[dict]] = defaultdict(list)
     for c in all_chunks:
         if not is_substantive(c):
             continue
-        doc_key = (c["source"], c.get("doc_id", ""))
+        doc_id = c.get("doc_id", "")
+        if not doc_id:
+            # PMC: prefer pmid in metadata, then title, then chunk_id prefix
+            meta = c.get("metadata", {})
+            pmid = meta.get("pmid")
+            title = meta.get("title") or ""
+            doc_id = (
+                str(pmid) if pmid is not None else None
+            ) or title[:80] or c.get("chunk_id", "").rsplit(":", 1)[0]
+        doc_key = (c["source"], doc_id)
         by_doc[doc_key].append(c)
 
     # ── Build clusters ─────────────────────────────────────────────────────────
@@ -499,6 +544,9 @@ def phase_verify(model: str, retrieval_top_k: int = 50, sleep_s: float = 0.8) ->
     # Setup P1 dense retrieval for rank recording
     print("[verify] loading retrieval components...", flush=True)
     sys.path.insert(0, str(ROOT / "src"))
+    # sentence_transformers MUST be imported before BGEM3Embedder / qdrant_client
+    # to ensure PyTorch initialises first — avoids STATUS_ACCESS_VIOLATION on Windows.
+    import sentence_transformers  # noqa: F401
     from qdrant_client import QdrantClient
     from medrag.index.embedder import BGEM3Embedder
     qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
