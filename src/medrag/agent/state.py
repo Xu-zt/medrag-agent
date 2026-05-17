@@ -49,7 +49,7 @@ class AgentState(TypedDict):
 
     iterations: int
     """Rewrite counter. Starts at 0; incremented inside rewrite node.
-    Hard cap: MAX_REWRITES = 1 (2 retrieval attempts total)."""
+    Hard cap: MAX_REWRITES = 2 (3 retrieval attempts total)."""
 
     # ── Generation ────────────────────────────────────────────────────────────
     answer: str
@@ -69,7 +69,7 @@ class AgentState(TypedDict):
     """Description of hallucinated claims (empty if faithful)."""
 
     regen_count: int
-    """Re-generation counter. Hard cap: MAX_REGEN = 1."""
+    """Re-generation counter. Hard cap: MAX_REGEN = 2."""
 
     # ── Memory ───────────────────────────────────────────────────────────────
     history: Annotated[list[dict], add]

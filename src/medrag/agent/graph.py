@@ -16,9 +16,9 @@ Graph topology
 
 Conditional edges
 ─────────────────
-  after grade   : score ≥ 0.6 → generate  |  else → rewrite (or generate if MAX hit)
-  after check   : faithful → END           |  regen_count < MAX → inc_regen → generate
-                                           |  cap hit → END (faithfulness_issues preserved)
+  after grade   : score ≥ 0.75 → generate  |  else → rewrite (or generate if MAX hit)
+  after check   : faithful → END            |  regen_count < MAX_REGEN → inc_regen → generate
+                                            |  cap hit → END (faithful=False, issues preserved)
 
 Memory
 ──────
@@ -48,7 +48,6 @@ from medrag.agent.nodes import (
     MAX_REWRITES,
     GRADE_THRESHOLD,
     _GRADE_THRESHOLDS,
-    REGEN_CONFIDENCE_SKIP,
     HISTORY_SUMMARIZE_EVERY,
     append_history,
     check_faithfulness,
@@ -101,31 +100,29 @@ def _after_grade(state: AgentState) -> str:
 def _after_check(state: AgentState) -> str:
     """Route after check_faithfulness:
       - faithful → END (via summarize gate)
-      - first-gen answer has citations + sufficient confidence → skip regen (trust it)
       - regen_count < MAX_REGEN → increment counter then re-generate
-      - cap hit → END (faithfulness_issues preserved)
+      - cap hit → END (faithful=False + faithfulness_issues preserved as warning)
+
+    NOTE: The former "smart gate" (confidence ≥ 0.3 bypass) has been removed.
+    Self-reported LLM confidence is unreliable and the 0.3 threshold was too low
+    to be a meaningful safety bar for medical answers.  If the faithfulness
+    checker has genuine false-positive issues, fix the checker prompt instead.
     """
     faithful    = state.get("faithful", False)
     regen_count = state.get("regen_count", 0)
-    confidence  = state.get("confidence", 0.0)
-    citations   = state.get("citations", [])
 
     if faithful:
-        return "end"
-
-    # Smart gate: if first-gen answer has real citations and decent confidence,
-    # trust it even if faithfulness check flagged issues.  The faithfulness
-    # checker has a high false-positive rate on nuanced medical answers.
-    if regen_count == 0 and citations and confidence >= REGEN_CONFIDENCE_SKIP:
-        logger.warning(
-            "[graph] unfaithful but first-gen has %d citations (conf=%.2f) — skipping regen",
-            len(citations), confidence)
         return "end"
 
     if regen_count < MAX_REGEN:
         logger.warning("[graph] unfaithful — re-generating (regen_count=%d)", regen_count)
         return "regenerate"
-    logger.warning("[graph] max regen hit — ending with unfaithful answer")
+
+    logger.warning(
+        "[graph] max regen hit (%d) — ending with unfaithful answer; "
+        "issues preserved in faithfulness_issues field",
+        regen_count,
+    )
     return "end"
 
 

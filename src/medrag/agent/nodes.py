@@ -52,16 +52,15 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-MAX_REWRITES = 1          # up to 2 retrieval attempts total (reduced from 2 to prevent query drift)
-MAX_REGEN    = 1          # 1 regen attempt; skip if first answer has good citations
-GRADE_THRESHOLD = 0.6     # relevance score below this triggers rewrite (base threshold)
-REGEN_CONFIDENCE_SKIP = 0.3  # skip regen if first-gen confidence >= this AND has citations
+MAX_REWRITES = 2          # up to 3 retrieval attempts total
+MAX_REGEN    = 2          # up to 2 regen attempts; no confidence-skip bypass
+GRADE_THRESHOLD = 0.75    # raised from 0.6 — stricter pass so rewrite fires meaningfully
 
 # Dynamic grade thresholds by query type (router output)
 _GRADE_THRESHOLDS = {
-    "factual":   0.5,  # simple factual queries rarely need rewrite
-    "synthesis": 0.6,  # standard threshold
-    "multihop":  0.7,  # more aggressive rewrite for multi-hop
+    "factual":   0.6,   # raised from 0.5
+    "synthesis": 0.75,  # raised from 0.6
+    "multihop":  0.8,   # raised from 0.7
 }
 HISTORY_SUMMARIZE_EVERY = 10  # L2 compression after this many turns
 CANDIDATE_K  = 20         # hybrid retrieval candidate pool
