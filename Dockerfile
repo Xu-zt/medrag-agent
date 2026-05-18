@@ -7,13 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy source code
+# Install Python dependencies from pyproject.toml
+# Copy pyproject.toml + src first so this layer is cached unless deps change
+COPY pyproject.toml .
 COPY src/ ./src/
-COPY .env* ./
+RUN pip install --no-cache-dir . && \
+    pip install --no-cache-dir langchain-ollama
 
 ENV PYTHONPATH=/app/src
 
