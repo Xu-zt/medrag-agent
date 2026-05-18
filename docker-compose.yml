@@ -1,5 +1,3 @@
-version: "3.9"
-
 # MedRAG-Agent — one-command local deployment
 #
 # ── API mode (default, uses MiMo / any OpenAI-compatible cloud LLM) ──────────
