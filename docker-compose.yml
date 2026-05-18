@@ -1,10 +1,17 @@
 version: "3.9"
 
 # MedRAG-Agent — one-command local deployment
-# Usage:
-#   docker compose up -d            # start all services
-#   docker compose logs -f frontend # follow frontend logs
-#   docker compose down             # stop all
+#
+# ── API mode (default, uses MiMo / any OpenAI-compatible cloud LLM) ──────────
+#   docker compose up -d
+#
+# ── Local LLM mode (Ollama + Qwen3-8B, no API key needed) ────────────────────
+#   docker compose --profile ollama up -d
+#
+# Other useful commands:
+#   docker compose logs -f backend   # follow backend logs
+#   docker compose down              # stop all (data preserved)
+#   docker compose down -v           # stop + wipe all volumes
 #
 # Open http://localhost:5173 in your browser.
 
@@ -26,8 +33,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── LLM inference (Qwen3-8B via Ollama) ──────────────────────────────────────
+  # ── Local LLM (Qwen3-8B via Ollama) — only started with --profile ollama ────
   ollama:
+    profiles: [ollama]
     image: ollama/ollama:latest
     container_name: medrag-ollama
     restart: unless-stopped
@@ -62,6 +70,7 @@ services:
     volumes:
       - ./data:/app/data:ro
       - model_cache:/root/.cache/huggingface
+    env_file: .env
     environment:
       - QDRANT_URL=http://qdrant:6333
       - OLLAMA_HOST=http://ollama:11434
