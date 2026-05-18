@@ -19,6 +19,7 @@ dependencies = [
   "torch>=2.6",
   # LangChain / LangGraph
   "langgraph>=0.2.50",
+  "langgraph-checkpoint-sqlite>=2.0",
   "langchain-core>=0.3",
   "langchain-openai>=0.1.20",
   "openai>=1.30",
