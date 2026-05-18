@@ -26,10 +26,11 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/localhost/6333'"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5s
 
   # ── Local LLM (Qwen3-8B via Ollama) — only started with --profile ollama ────
   ollama:
