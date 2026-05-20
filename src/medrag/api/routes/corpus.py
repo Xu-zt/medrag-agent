@@ -14,7 +14,9 @@ from medrag.api.models import CorpusStats, HealthResponse
 
 router = APIRouter()
 
-_COLLECTION = "medrag_text"
+from medrag.config import COLLECTION_NAME
+
+_COLLECTION = COLLECTION_NAME
 _EMBEDDING_MODEL = "BAAI/bge-m3"
 
 

@@ -291,6 +291,7 @@ medrag-agent/
 ├── scripts/                # Numbered pipeline scripts (01–14)
 ├── openapi.json            # FastAPI OpenAPI schema
 ├── .env.example            # Required environment variables
-├── start_ui.ps1            # Backend launcher (Windows)
+├── start_dev.ps1           # Dev launcher (Windows)
+├── start_setup.ps1         # First-run setup (Windows)
 └── start_mcp.ps1           # MCP server launcher (Windows)
 ```

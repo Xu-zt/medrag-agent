@@ -22,6 +22,7 @@ import numpy as np
 from FlagEmbedding.inference.embedder.encoder_only.m3 import M3Embedder
 from qdrant_client import QdrantClient
 
+from medrag.config import COLLECTION_NAME, qdrant_url
 from medrag.ingest.chunker import chunk_pubmed_record, chunk_pmc_record
 from medrag.index.qdrant_setup import create_collection
 from medrag.index.indexer import index_chunks
@@ -109,18 +110,18 @@ def phase_sparse(chunks) -> list[dict]:
 
 def phase_index(chunks, dense: np.ndarray, sparse_weights: list[dict] | None) -> None:
     print("[qdrant] connecting (timeout=120s)...", flush=True)
-    client = QdrantClient(url="http://localhost:6333", timeout=120)
-    create_collection(client, "medrag_text", recreate=True)
+    client = QdrantClient(url=qdrant_url(), timeout=120)
+    create_collection(client, COLLECTION_NAME, recreate=True)
     print(f"[qdrant] upserting {len(chunks)} points...", flush=True)
     index_chunks(
         client,
         chunks,
         dense,
         sparse_weights=sparse_weights,
-        collection="medrag_text",
+        collection=COLLECTION_NAME,
         batch=256,
     )
-    count = client.count(collection_name="medrag_text").count
+    count = client.count(collection_name=COLLECTION_NAME).count
     print(f"[done] qdrant points: {count}", flush=True)
 
 

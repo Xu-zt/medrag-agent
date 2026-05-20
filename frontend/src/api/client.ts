@@ -1,8 +1,9 @@
 import axios from 'axios'
 import type { ChunkContextResponse, CorpusStats, DocumentResponse, SearchResponse } from '../types'
 
-// In dev: set VITE_API_URL=http://localhost:8000 in frontend/.env.local
-// In production: leave unset — frontend and API share the same origin
+// Dev options (pick one):
+//   A) frontend/.env.local  →  VITE_API_URL=http://localhost:8000  (direct to FastAPI)
+//   B) leave unset          →  Vite proxies /api to :8000 (see vite.config.ts)
 const BASE = (import.meta.env.VITE_API_URL as string) ?? ''
 
 export const api = axios.create({ baseURL: BASE })

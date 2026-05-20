@@ -74,34 +74,39 @@ docker run -d -p 6333:6333 qdrant/qdrant:latest
 
 ### 3. Build the index (first time only)
 
+If you already have `data/raw/` or `data/index_cache/` from a data bundle:
+
 ```bash
-# With medrag env active:
-python scripts/01_download_pubmed.py
-python scripts/02_download_pmc.py
-python scripts/03_chunk.py
+python scripts/04_build_index.py --phase=index   # upload cache → Qdrant
+# or full rebuild:
+python scripts/04_build_index.py --phase=all
+```
+
+Otherwise ingest from NCBI then index:
+
+```bash
+python scripts/01_ingest_pubmed.py
+python scripts/02_ingest_pmc.py
 python scripts/04_build_index.py
 ```
 
-### 4. Run — two terminals
+### 4. Run (Windows)
 
-**Terminal 1 — backend**
+**Daily development** — one command, opens backend + frontend in new terminals:
+
 ```powershell
-.\start_ui.ps1
-# Backend at http://localhost:8000
-# API docs at http://localhost:8000/docs
+.\start_dev.ps1
 ```
 
-**Terminal 2 — frontend**
-```bash
-cd frontend
-# First time only:
-npm install
-# Ensure frontend/.env.local contains: VITE_API_URL=http://localhost:8000
-npm run dev
-# Frontend at http://localhost:5173
+**First-time / new PC** — creates conda env, checks data & Qdrant index, then starts stack:
+
+```powershell
+.\start_setup.ps1
 ```
 
-Open **http://localhost:5173**.
+Open **http://localhost:5173** · API **http://localhost:8000/docs**
+
+Ports and env vars: [`docs/PORTS.md`](docs/PORTS.md).
 
 ---
 
@@ -192,8 +197,9 @@ medrag-agent/
 ├── scripts/                # Numbered pipeline scripts (01–14)
 ├── openapi.json            # FastAPI OpenAPI schema (source for api.gen.ts)
 ├── .env.example            # Required env vars template
-├── start_ui.ps1            # One-click backend launcher (Windows)
-└── start_mcp.ps1           # One-click MCP server launcher (Windows)
+├── start_dev.ps1           # Dev: Qdrant + backend + frontend (Windows)
+├── start_setup.ps1         # First-run setup + start (Windows)
+└── start_mcp.ps1           # MCP server launcher (Windows)
 ```
 
 ---

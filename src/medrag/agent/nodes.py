@@ -88,8 +88,9 @@ def _get_retriever():
     # after qdrant_client's gRPC layer is initialized causes a segfault on Windows
     # due to a native library conflict between grpc and torch C++ runtimes.
     embedder = BGEM3Embedder(device=device)
-    qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
-    qdrant = QdrantClient(url=qdrant_url, timeout=30)
+    from medrag.config import qdrant_url as _qdrant_url
+
+    qdrant = QdrantClient(url=_qdrant_url(), timeout=30)
     return HybridRetriever(qdrant, embedder, candidate_k=CANDIDATE_K)
 
 

@@ -98,7 +98,9 @@ def _worker_main(pipeline: str, top_k: int) -> None:
     from medrag.retrieval.hybrid import HybridRetriever
 
     print(f"[worker:{pipeline}] loading embedder...", file=sys.stderr, flush=True)
-    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    from medrag.config import qdrant_url
+
+    qdrant = QdrantClient(url=qdrant_url(), timeout=30)
     embedder = BGEM3Embedder(device="auto")
 
     if pipeline == "p1":

@@ -61,7 +61,9 @@ def _worker_main(pipeline: str, k: int, candidate_k: int) -> None:
     from medrag.index.embedder import BGEM3Embedder
 
     print(f"[worker:{pipeline}] loading embedder...", file=sys.stderr, flush=True)
-    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    from medrag.config import qdrant_url
+
+    qdrant = QdrantClient(url=qdrant_url(), timeout=30)
     embedder = BGEM3Embedder(device="cpu")
 
     from medrag.retrieval.retriever import DenseRetriever, RetrievedChunk

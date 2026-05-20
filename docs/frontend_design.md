@@ -49,7 +49,7 @@ The frontend and backend are **served separately**. The backend does not mount o
 
 **Terminal 1 — backend**
 ```powershell
-.\start_ui.ps1          # Windows — backend at http://localhost:8000
+.\start_dev.ps1         # Windows — Qdrant + backend + frontend
 ```
 
 **Terminal 2 — frontend**

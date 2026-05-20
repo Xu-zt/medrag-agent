@@ -146,7 +146,9 @@ def _get_pipeline(pipeline: str):
     from medrag.retrieval.retriever import DenseRetriever
     from medrag.retrieval.hybrid import HybridRetriever
 
-    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    from medrag.config import COLLECTION_NAME, qdrant_url
+
+    qdrant = QdrantClient(url=qdrant_url(), timeout=30)
     embedder = BGEM3Embedder(device="cpu")
 
     if pipeline == "p1":

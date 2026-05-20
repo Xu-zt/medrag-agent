@@ -144,7 +144,9 @@ def load_corpus_chunks() -> list[dict]:
     from qdrant_client import QdrantClient
     from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
 
-    q = QdrantClient(url="http://localhost:6333", timeout=30)
+    from medrag.config import COLLECTION_NAME, qdrant_url
+
+    q = QdrantClient(url=qdrant_url(), timeout=30)
 
     good_sections = ["ABSTRACT", "INTRO", "RESULTS", "DISCUSS", "CONCL", "CONCLUSION"]
     chunks = []
@@ -153,7 +155,7 @@ def load_corpus_chunks() -> list[dict]:
     logger.info("Scrolling PMC content sections …")
     while len(chunks) < 5000:
         pts, next_offset = q.scroll(
-            "medrag_text",
+            COLLECTION_NAME,
             scroll_filter=Filter(must=[
                 FieldCondition(key="source", match=MatchValue(value="pmc")),
                 FieldCondition(key="section", match=MatchAny(any=good_sections)),
@@ -168,7 +170,7 @@ def load_corpus_chunks() -> list[dict]:
 
     logger.info("Scrolling PubMed abstracts …")
     pts2, _ = q.scroll(
-        "medrag_text",
+        COLLECTION_NAME,
         scroll_filter=Filter(must=[
             FieldCondition(key="source", match=MatchValue(value="pubmed")),
         ]),

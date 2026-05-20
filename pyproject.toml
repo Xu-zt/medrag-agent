@@ -44,7 +44,6 @@ dev = [
   "ruff",
   "pytest",
   "ipykernel",
-  "streamlit>=1.35",
   "langchain-ollama>=0.2",   # only needed when LLM_BACKEND=ollama
 ]
 

@@ -260,11 +260,13 @@ def phase_sample(n_candidates: int, seed: int = 42) -> None:
     all_chunks: list[dict] = []
     try:
         from qdrant_client import QdrantClient as _QC
-        _qc = _QC(url="http://localhost:6333", timeout=30)
+        from medrag.config import COLLECTION_NAME, qdrant_url
+
+        _qc = _QC(url=qdrant_url(), timeout=30)
         offset = None
         while True:
             batch, offset = _qc.scroll(
-                "medrag_text",
+                COLLECTION_NAME,
                 limit=1000,
                 offset=offset,
                 with_payload=True,
@@ -549,7 +551,9 @@ def phase_verify(model: str, retrieval_top_k: int = 50, sleep_s: float = 0.8) ->
     import sentence_transformers  # noqa: F401
     from qdrant_client import QdrantClient
     from medrag.index.embedder import BGEM3Embedder
-    qdrant = QdrantClient(url="http://localhost:6333", timeout=30)
+    from medrag.config import COLLECTION_NAME, qdrant_url
+
+    qdrant = QdrantClient(url=qdrant_url(), timeout=30)
     embedder = BGEM3Embedder(device="cpu")
     print("[verify] retrieval ready", flush=True)
 
@@ -560,7 +564,7 @@ def phase_verify(model: str, retrieval_top_k: int = 50, sleep_s: float = 0.8) ->
         enc = embedder.encode([question])
         vec = enc["dense"][0].tolist()
         results = qdrant.query_points(
-            collection_name="medrag_text",
+            collection_name=COLLECTION_NAME,
             query=vec,
             using="dense",
             limit=retrieval_top_k,

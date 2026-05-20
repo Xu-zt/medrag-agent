@@ -20,6 +20,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 from qdrant_client import QdrantClient
 
+from medrag.config import qdrant_url
 from medrag.agent.generator import generate_answer
 from medrag.index.embedder import BGEM3Embedder
 from medrag.retrieval.retriever import DenseRetriever
@@ -30,7 +31,7 @@ from medrag.retrieval.multi_query import MultiQueryRetriever
 
 
 def main(query: str, k: int = 5, mode: str = "p3") -> None:
-    qdrant = QdrantClient(url="http://localhost:6333")
+    qdrant = QdrantClient(url=qdrant_url())
     embedder = BGEM3Embedder(device="cpu")
 
     extra_info = None

@@ -3,7 +3,6 @@ Shared helper utilities for all API routes.
 """
 from __future__ import annotations
 
-import os
 import re
 from functools import lru_cache
 from typing import Any
@@ -12,13 +11,14 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
 
 from medrag.api.models import ChunkOut
+from medrag.config import COLLECTION_NAME, qdrant_url
 
-_COLLECTION = "medrag_text"
+_COLLECTION = COLLECTION_NAME
 
 
 @lru_cache(maxsize=1)
 def get_qdrant() -> QdrantClient:
-    return QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"), timeout=10)
+    return QdrantClient(url=qdrant_url(), timeout=10)
 
 
 # ── Payload → ChunkOut ───────────────────────────────────────────────────────
