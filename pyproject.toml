@@ -5,38 +5,35 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "medrag-agent"
 version = "0.1.0"
-description = "MedRAG-Agent (dependency manifest; install via conda environment.yml)"
+description = "VeritasMed medical literature RAG agent — install deps with pip install -e ."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  # Retrieval / embedding
-  "qdrant-client>=1.12",
-  # NOTE: sentence-transformers intentionally omitted. We use FlagEmbedding's
-  # BGEM3FlagModel and FlagReranker directly, which bypass sentence_transformers
-  # entirely. Including it pulls in datasets+pyarrow which cause Windows access
-  # violation crashes in some envs (see _smoke_bge_only.py). Add back if needed.
-  "FlagEmbedding>=1.3",
+  # ── ML / retrieval (runtime) ─────────────────────────────────────────────
   "torch>=2.6",
-  # LangChain / LangGraph
+  "numpy>=1.26",
+  "sentence-transformers>=3.0",   # app.py preload; BGEReranker cross-encoder
+  "FlagEmbedding>=1.3",             # BGEM3Embedder; scripts/04_build_index
+  "qdrant-client>=1.12",
+  # ── LangGraph agent + LLM ──────────────────────────────────────────────────
   "langgraph>=0.2.50",
   "langgraph-checkpoint-sqlite>=2.0",
   "langchain-core>=0.3",
-  "langchain-openai>=0.1.20",
-  "openai>=1.30",
-  # FastAPI / MCP server
+  "langchain-openai>=0.2",
+  "langchain-ollama>=0.2",          # LLM_BACKEND=ollama; HyDE / multi-query retrievers
+  "openai>=1.30",                   # eval scripts judge client
+  # ── API + MCP ─────────────────────────────────────────────────────────────
   "fastapi>=0.111",
   "uvicorn[standard]>=0.30",
   "fastmcp>=2.0",
   "pydantic>=2.7",
-  # Data ingestion
-  "biopython>=1.84",
-  "pymupdf>=1.24",
-  # Utilities
+  "pyarrow>=15.0",                  # Windows import-order guard (MCP / scripts)
+  # ── Ingest + utilities ─────────────────────────────────────────────────────
+  "biopython>=1.84",                # PubMed / PMC Entrez
+  "httpx>=0.27",
   "tenacity>=9.0",
   "python-dotenv>=1.0",
   "tqdm>=4.66",
-  "httpx>=0.27",
-  "pyarrow>=15.0",
 ]
 
 [project.optional-dependencies]
@@ -44,7 +41,6 @@ dev = [
   "ruff",
   "pytest",
   "ipykernel",
-  "langchain-ollama>=0.2",   # only needed when LLM_BACKEND=ollama
 ]
 
 [tool.ruff]

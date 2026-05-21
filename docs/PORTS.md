@@ -13,7 +13,7 @@
 | Script | Who | What |
 |--------|-----|------|
 | `start_dev.ps1` | You (daily dev) | Docker Qdrant + backend + frontend windows |
-| `start_setup.ps1` | New machine / beginner | conda, pip, data/index checks, then same as dev |
+| `start_setup.ps1` | New machine / beginner | conda (Python only) + `pip install -e .` from `pyproject.toml`, data/index checks, then same as dev |
 | `start_mcp.ps1` | Claude MCP | Config help / `mcp dev` / install |
 
 All Qdrant URLs read from `QDRANT_URL` via `medrag.config.qdrant_url()` — do not hardcode ports in new code.

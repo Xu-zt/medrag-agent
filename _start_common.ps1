@@ -211,6 +211,28 @@ function Invoke-ProjectPython {
     }
 }
 
+# Scheme A: conda env is Python-only; all libraries come from pyproject.toml via pip.
+function Install-ProjectDependencies {
+    param(
+        [string]$PythonExe,
+        [switch]$WithDev
+    )
+    $torchIndex = "https://download.pytorch.org/whl/cu124"
+    Write-Host "[*] Installing PyTorch (CUDA 12.4 wheel index) ..." -ForegroundColor Cyan
+    $code = Invoke-ProjectPython -PythonExe $PythonExe -Args @(
+        "-m", "pip", "install", "torch>=2.6", "--index-url", $torchIndex
+    )
+    if ($code -ne 0) {
+        Write-Host "[WARN] CUDA PyTorch install failed; trying CPU build from PyPI ..." -ForegroundColor Yellow
+        $code = Invoke-ProjectPython -PythonExe $PythonExe -Args @("-m", "pip", "install", "torch>=2.6")
+        if ($code -ne 0) { return $code }
+    }
+
+    $editable = if ($WithDev) { ".[dev]" } else { "." }
+    Write-Host "[*] Installing project (pip install -e $editable) from pyproject.toml ..." -ForegroundColor Cyan
+    return (Invoke-ProjectPython -PythonExe $PythonExe -Args @("-m", "pip", "install", "-e", $editable))
+}
+
 function Get-QdrantPointCount {
     param(
         [string]$PythonExe,

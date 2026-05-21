@@ -1,29 +1,10 @@
+# Conda: Python runtime only (scheme A).
+# All project libraries are installed via:  pip install -e .
+# See pyproject.toml for the single source of truth.
 name: medrag
-channels: [pytorch, nvidia, conda-forge, defaults]
+channels:
+  - conda-forge
+  - defaults
 dependencies:
   - python=3.12
   - pip
-  - pip:
-      # NOTE: torch >= 2.6 required (CVE-2025-32434 in transformers).
-      # Use the official PyTorch wheel index for CUDA 12.4 build:
-      #   pip install --index-url https://download.pytorch.org/whl/cu124 torch>=2.6
-      # Then `pip install -e .` for the rest. Or just install everything below
-      # via pip after activating the env.
-      - --extra-index-url https://download.pytorch.org/whl/cu124
-      - torch>=2.6
-      - qdrant-client>=1.12
-      # NOTE: sentence-transformers intentionally omitted (see pyproject.toml).
-      - FlagEmbedding>=1.3
-      - langgraph>=0.2.50
-      - langchain-core>=0.3
-      - langchain-ollama>=0.2
-      - langchain-openai>=0.2
-      - biopython>=1.84
-      - pymupdf>=1.24
-      - tenacity>=9.0
-      - python-dotenv>=1.0
-      - tqdm>=4.66
-      - httpx>=0.27
-      - ruff
-      - pytest
-      - ipykernel

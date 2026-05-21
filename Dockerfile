@@ -11,8 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy pyproject.toml + src first so this layer is cached unless deps change
 COPY pyproject.toml .
 COPY src/ ./src/
-RUN pip install --no-cache-dir . && \
-    pip install --no-cache-dir langchain-ollama
+RUN pip install --no-cache-dir .
 
 ENV PYTHONPATH=/app/src
 

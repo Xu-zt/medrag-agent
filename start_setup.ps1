@@ -58,7 +58,7 @@ $ErrorActionPreference = $prevEap
 $hasMedrag = $envList -match "(?m)^$([regex]::Escape($script:MedragCondaEnv))\s"
 
 if (-not $hasMedrag) {
-    Write-Host "[*] Creating conda env '$($script:MedragCondaEnv)' from environment.yml (several minutes) ..." -ForegroundColor Cyan
+    Write-Host "[*] Creating conda env '$($script:MedragCondaEnv)' (Python 3.12 only) ..." -ForegroundColor Cyan
     Push-Location $Root
     & conda env create -f environment.yml
     if ($LASTEXITCODE -ne 0) {
@@ -79,20 +79,16 @@ if (-not $py) {
 }
 Write-Host "[OK] Python: $py" -ForegroundColor Green
 
-if (-not (Test-MedragEnvHealthy -PythonExe $py -OnError { param($m) })) {
-    Write-Host "[*] Installing project package (pip install -e .) ..." -ForegroundColor Cyan
-    $code = Invoke-ProjectPython -PythonExe $py -Args @("-m", "pip", "install", "-e", ".")
-    if ($code -ne 0) {
-        $code = Invoke-ProjectPython -PythonExe $py -Args @("-m", "pip", "install", "-e", ".[dev]")
-    }
-    if ($code -ne 0 -or -not (Test-MedragEnvHealthy -PythonExe $py)) {
-        Write-StepError "pip install failed" "Try: conda activate medrag; pip install -e ."
-        exit 1
-    }
-    Write-Host "[OK] Python dependencies installed" -ForegroundColor Green
-} else {
-    Write-Host "[OK] Python dependencies OK" -ForegroundColor Green
+$code = Install-ProjectDependencies -PythonExe $py
+if ($code -ne 0) {
+    Write-StepError "pip install failed" "Try: conda activate medrag; pip install -e ."
+    exit 1
 }
+if (-not (Test-MedragEnvHealthy -PythonExe $py -OnError { param($m) Write-Host $m -ForegroundColor DarkRed })) {
+    Write-StepError "Dependencies installed but health check failed" "See output above; try: pip install -e ."
+    exit 1
+}
+Write-Host "[OK] Python dependencies installed (pyproject.toml)" -ForegroundColor Green
 
 $envFile = Join-Path $Root ".env"
 if (-not (Test-Path $envFile)) {

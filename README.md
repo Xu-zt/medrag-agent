@@ -52,10 +52,16 @@ Two LLMs:
 
 ### 1. Environment
 
+`environment.yml` only creates **Python 3.12** in conda. All libraries are declared in **`pyproject.toml`** and installed with pip:
+
 ```bash
 conda env create -f environment.yml
 conda activate medrag
+pip install torch>=2.6 --index-url https://download.pytorch.org/whl/cu124
+pip install -e .
 ```
+
+On Windows, `.\start_setup.ps1` runs the same steps (conda + PyTorch + `pip install -e .`) automatically.
 
 ```powershell
 copy .env.example .env   # Windows
@@ -163,7 +169,7 @@ medrag-agent/
 │   │   ├── llms.py         # Dual-LLM factory (fast + think)
 │   │   └── utils.py        # strip_thinking()
 │   ├── index/
-│   │   ├── embedder.py     # BGEM3Embedder (sentence_transformers, dense 1024-d)
+│   │   ├── embedder.py     # BGEM3Embedder (FlagEmbedding M3, dense + sparse)
 │   │   └── indexer.py      # Qdrant upsert pipeline
 │   ├── retrieval/
 │   │   ├── hybrid.py       # HybridRetriever (dense + RRF)
@@ -206,8 +212,8 @@ medrag-agent/
 
 ## Key Design Decisions
 
-**sentence_transformers instead of FlagEmbedding**  
-FlagEmbedding's decoder-only reranker triggers a `STATUS_ACCESS_VIOLATION` crash on Windows. Both the embedder (`SentenceTransformer("BAAI/bge-m3")`) and reranker (`CrossEncoder("BAAI/bge-reranker-v2-m3")`) use `sentence_transformers`. Dense retrieval is unaffected; sparse vectors are not produced (dense-only RRF).
+**FlagEmbedding embedder + sentence_transformers reranker**  
+Dense/sparse vectors use FlagEmbedding's `M3Embedder` (direct import path avoids the decoder-only reranker chain that crashes on Windows). The cross-encoder reranker uses `sentence_transformers.CrossEncoder("BAAI/bge-reranker-v2-m3")`. Both stacks need PyTorch loaded before `qdrant_client` (see import order below).
 
 **Import order in app.py**  
 `import sentence_transformers` must appear before any `qdrant_client` import. On Windows, qdrant_client's gRPC native runtime conflicts with PyTorch if PyTorch loads after it. Pre-importing `sentence_transformers` at startup loads PyTorch first.
